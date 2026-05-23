@@ -72,11 +72,10 @@ function buildLiveTimeMatrixVariant(baseVariant) {
   var hh = String(h12).padStart(2, '0');
   var period = isAM ? 'AM' : 'PM';
   var weekday = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][now.getDay()];
-  var day = String(now.getDate()).padStart(2, '0');
   return Object.assign({}, baseVariant || {}, {
     time: hh + ':' + mm,
     meta: period + ' ' + weekday,
-    dayDigits: day
+    dayDigits: '  '
   });
 }
 
@@ -159,9 +158,9 @@ function startDotTimeMatrixAiMotion(stage) {
 
     if (!motion.revealStarted && elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
       motion.revealStarted = true;
-      var revealStep = 40;
+      var revealStep = 18;
       revealDots(timeDots, 0, revealStep);
-      revealDots(metaDots, timeDots.length * revealStep + 180, revealStep);
+      revealDots(metaDots, timeDots.length * revealStep + 64, revealStep);
     }
 
     if (elapsed >= TIMEMAT_AI_WIND_END_MS) {

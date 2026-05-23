@@ -2847,16 +2847,17 @@
   .detail-stage.is-timemat-ai-intro .dot-timemat__dot {
     opacity: 0;
     animation: none;
-    transform: scale(0.38);
+    transform: scale(0.52);
     transform-box: fill-box;
     transform-origin: center;
-    transition:
-      opacity 520ms cubic-bezier(0.16, 1, 0.3, 1),
-      transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
   }
   .detail-stage.is-timemat-ai-intro .dot-timemat__dot.is-lit {
-    opacity: 1;
-    transform: scale(1);
+    animation: dotTimematStampIn 150ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  @keyframes dotTimematStampIn {
+    0% { opacity: 0; transform: scale(0.48); }
+    58% { opacity: 1; transform: scale(1.1); }
+    100% { opacity: 1; transform: scale(1); }
   }
 
   /* Schedule cards (dot) */
