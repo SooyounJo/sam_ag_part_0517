@@ -113,16 +113,27 @@ function startDotTimeMatrixAiMotion(stage) {
   var processDotColor = '#FF7500';
   var processDotOpacityMin = 0.22;
   var processDotOpacityMax = 1;
+  var dotGrowMs = 150;
   var motion = { raf: 0, timers: [], runId: 1, stage: stage, revealStarted: false };
   _timematAiMotion = motion;
 
   timeDots.forEach(function (d) {
     d.classList.remove('is-lit');
     d.style.transition = '';
+    if (!d.getAttribute('data-target-r')) {
+      d.setAttribute('data-target-r', d.getAttribute('r') || String(baseR));
+    }
+    d.setAttribute('r', String(parseFloat(d.getAttribute('data-target-r')) * 0.06));
+    d.setAttribute('fill-opacity', '0');
   });
   metaDots.forEach(function (d) {
     d.classList.remove('is-lit');
     d.style.transition = '';
+    if (!d.getAttribute('data-target-r')) {
+      d.setAttribute('data-target-r', d.getAttribute('r') || String(baseR));
+    }
+    d.setAttribute('r', String(parseFloat(d.getAttribute('data-target-r')) * 0.06));
+    d.setAttribute('fill-opacity', '0');
   });
   bgGroup.style.transition = '';
   bgDots.forEach(function (dot) {
@@ -156,6 +167,45 @@ function startDotTimeMatrixAiMotion(stage) {
     return id;
   }
 
+  function growDotIn(dot) {
+    if (_timematAiMotion !== motion || motion.runId !== 1) return;
+    dot.classList.add('is-lit');
+    var targetR = parseFloat(dot.getAttribute('data-target-r') || String(baseR));
+    var startR = targetR * 0.06;
+    var peakR = targetR * 1.05;
+    var growStart = performance.now();
+
+    function easeOutCubic(t) {
+      return 1 - Math.pow(1 - t, 3);
+    }
+
+    function growFrame(now) {
+      if (_timematAiMotion !== motion || motion.runId !== 1) return;
+      var p = Math.min((now - growStart) / dotGrowMs, 1);
+      var rVal;
+      var opacity;
+      if (p < 0.55) {
+        var pGrow = p / 0.55;
+        var eased = easeOutCubic(pGrow);
+        rVal = startR + (peakR - startR) * eased;
+        opacity = eased;
+      } else {
+        var pSettle = (p - 0.55) / 0.45;
+        rVal = peakR + (targetR - peakR) * easeOutCubic(pSettle);
+        opacity = 1;
+      }
+      dot.setAttribute('r', rVal.toFixed(3));
+      dot.setAttribute('fill-opacity', opacity.toFixed(3));
+      if (p < 1) requestAnimationFrame(growFrame);
+      else {
+        dot.setAttribute('r', String(targetR));
+        dot.removeAttribute('fill-opacity');
+      }
+    }
+
+    requestAnimationFrame(growFrame);
+  }
+
   function revealRows(dots, startDelayMs, rowStepMs, inRowStepMs) {
     var rowGroups = groupDotsByRow(dots);
     var maxAt = startDelayMs;
@@ -163,14 +213,11 @@ function startDotTimeMatrixAiMotion(stage) {
       var rowStart = startDelayMs + rowIndex * rowStepMs;
       row.forEach(function (dot, dotIndex) {
         var at = rowStart + dotIndex * inRowStepMs;
-        schedule(function () {
-          if (_timematAiMotion !== motion || motion.runId !== 1) return;
-          dot.classList.add('is-lit');
-        }, at);
+        schedule(function () { growDotIn(dot); }, at);
         if (at > maxAt) maxAt = at;
       });
     });
-    return maxAt + 100;
+    return maxAt + dotGrowMs;
   }
 
   function waveFrame(startTs, nowTs) {
