@@ -4289,11 +4289,12 @@ window.renderAtomicForRole = function renderAtomicForRole(comp, rect) {
         }
       }
 
-      var active = {};
+      var activeTime = {};
+      var activeMeta = {};
       // Left aligned layout: time on top, meta on bottom-left, day digits bottom-right.
-      _putText(active, lineTime, 0, 2);
-      _putText(active, lineMeta, 0, 11);
-      _putText(active, String(dayDigits).padStart(2, '0'), cols - 11, 11);
+      _putText(activeTime, lineTime, 0, 2);
+      _putText(activeMeta, lineMeta, 0, 11);
+      _putText(activeMeta, String(dayDigits).padStart(2, '0'), cols - 11, 11);
 
       var isMusic = lineTime.indexOf('MUSIC') !== -1 || lineMeta.indexOf('MUSIC') !== -1;
 
@@ -4309,31 +4310,35 @@ window.renderAtomicForRole = function renderAtomicForRole(comp, rect) {
           }
           var cx = margin + xx * step;
           var cy = margin + yy * step;
-          bgDots += '<circle class="dot-timemat__bgDot" cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="' + BG_DOT + '" />';
+          bgDots += '<circle class="dot-timemat__bgDot" data-gx="' + xx + '" data-gy="' + yy + '" cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="' + BG_DOT + '" />';
         }
       }
 
-      var onDots = '';
-      var dotIndex = 0;
-      for (var k in active) {
-        var parts = k.split(',');
-        var gx = parseInt(parts[0], 10);
-        var gy = parseInt(parts[1], 10);
-        
-        // Skip corner dots for active overlay as well.
-        if ((gx === 0 && gy === 0) || 
-            (gx === 0 && gy === rows - 1) || 
-            (gx === cols - 1 && gy === 0) || 
-            (gx === cols - 1 && gy === rows - 1)) {
-          continue;
+      var _emitActiveDots = function(set, layer) {
+        var out = '';
+        var layerIndex = 0;
+        for (var k in set) {
+          var parts = k.split(',');
+          var gx = parseInt(parts[0], 10);
+          var gy = parseInt(parts[1], 10);
+          if ((gx === 0 && gy === 0) ||
+              (gx === 0 && gy === rows - 1) ||
+              (gx === cols - 1 && gy === 0) ||
+              (gx === cols - 1 && gy === rows - 1)) {
+            continue;
+          }
+          var cx2 = margin + gx * step;
+          var cy2 = margin + gy * step;
+          out += '<circle class="dot-timemat__dot" data-layer="' + layer + '" data-cx="' + cx2 + '" data-cy="' + cy2 + '" cx="' + cx2 + '" cy="' + cy2 + '" r="' + r + '" fill="' + DOT_COLOR + '" style="--i:' + layerIndex + ';" />';
+          layerIndex++;
         }
+        return out;
+      };
 
-        var cx2 = margin + gx * step;
-        var cy2 = margin + gy * step;
-        onDots += '<circle class="dot-timemat__dot" cx="' + cx2 + '" cy="' + cy2 + '" r="' + r + '" fill="' + DOT_COLOR + '" style="--i:' + dotIndex + ';" />';
-        dotIndex++;
-      }
-      var totalDots = dotIndex;
+      var onDots = _emitActiveDots(activeTime, 'time') + _emitActiveDots(activeMeta, 'meta');
+      var totalDots = 0;
+      for (var tk in activeTime) totalDots++;
+      for (var mk in activeMeta) totalDots++;
 
       var onDotsHtml = isMusic 
         ? '<g class="dot-timemat__onGroup--scroll">' + onDots + '</g>' 
@@ -4345,8 +4350,8 @@ window.renderAtomicForRole = function renderAtomicForRole(comp, rect) {
           'data-dot-count="' + totalDots + '" ' +
           'data-time="' + lineTime + '" data-meta="' + lineMeta + '" data-day="' + dayDigits + '" ' +
           'title="dot-count: ' + totalDots + '">' +
-          '<svg class="dot-timemat__svg" width="340" height="180" viewBox="0 0 340 180" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-            bgDots +
+          '<svg class="dot-timemat__svg" width="340" height="180" viewBox="0 0 340 180" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" data-cols="' + cols + '" data-rows="' + rows + '">' +
+            '<g class="dot-timemat__bgGroup">' + bgDots + '</g>' +
             onDotsHtml +
           '</svg>' +
         '</div>';

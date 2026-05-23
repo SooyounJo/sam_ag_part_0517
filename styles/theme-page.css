@@ -2844,6 +2844,13 @@
     0%, 100% { opacity: 0.92; }
     50% { opacity: 1; }
   }
+  .detail-stage.is-timemat-ai-intro .dot-timemat__dot {
+    opacity: 0;
+    animation: none;
+  }
+  .detail-stage.is-timemat-ai-intro .dot-timemat__dot.is-lit {
+    opacity: 1;
+  }
 
   /* Schedule cards (dot) */
   .dot-sch {

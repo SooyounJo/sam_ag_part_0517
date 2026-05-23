@@ -47,6 +47,176 @@ var DOT_WEATHER_21_W = 168;
 var DOT_WEATHER_21_H = 82;
 var DOT_WEATHER_21_PAIR_GAP = 12;
 var DOT_CAMERA_PREVIEW_SHELL = 82;
+var DOT_TIMEMAT_W = 340;
+var DOT_TIMEMAT_H = 180;
+var DOT_TIMEMAT_DETAIL_GAP = 24;
+var TIMEMAT_AI_WAVE_MS = 5000;
+var _timematAiMotion = null;
+
+function buildLiveTimeMatrixVariant(baseVariant) {
+  var now = new Date();
+  var h24 = now.getHours();
+  var mm = String(now.getMinutes()).padStart(2, '0');
+  var isAM = h24 < 12;
+  var h12 = h24 % 12;
+  if (h12 === 0) h12 = 12;
+  var hh = String(h12).padStart(2, '0');
+  var period = isAM ? 'AM' : 'PM';
+  var weekday = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][now.getDay()];
+  var day = String(now.getDate()).padStart(2, '0');
+  return Object.assign({}, baseVariant || {}, {
+    time: hh + ':' + mm,
+    meta: period + ' ' + weekday,
+    dayDigits: day
+  });
+}
+
+function clearDotTimeMatrixAiMotion() {
+  if (!_timematAiMotion) return;
+  if (_timematAiMotion.raf) cancelAnimationFrame(_timematAiMotion.raf);
+  if (_timematAiMotion.timers) {
+    _timematAiMotion.timers.forEach(function (id) { clearTimeout(id); });
+  }
+  _timematAiMotion = null;
+}
+
+function _timematAiNoise(gx, gy, cols, rows, t) {
+  return Math.sin(gx * 0.31 + gy * 0.47 + t * 2.1) * Math.sin(gy * 0.23 - gx * 0.19 + t * 1.6);
+}
+
+function startDotTimeMatrixAiMotion(stage) {
+  clearDotTimeMatrixAiMotion();
+  if (!stage) return;
+  var timemat = stage.querySelector('.dot-timemat');
+  if (!timemat) return;
+  var svg = timemat.querySelector('.dot-timemat__svg');
+  var bgGroup = timemat.querySelector('.dot-timemat__bgGroup');
+  if (!svg || !bgGroup) return;
+
+  var cols = parseInt(svg.getAttribute('data-cols'), 10) || 41;
+  var rows = parseInt(svg.getAttribute('data-rows'), 10) || 21;
+  var bgDots = Array.prototype.slice.call(bgGroup.querySelectorAll('.dot-timemat__bgDot'));
+  var timeDots = Array.prototype.slice.call(svg.querySelectorAll('.dot-timemat__dot[data-layer="time"]'));
+  var metaDots = Array.prototype.slice.call(svg.querySelectorAll('.dot-timemat__dot[data-layer="meta"]'));
+  var baseR = 2.8;
+  var waveFrequency = 2;
+  var waveAmplitude = 0.6;
+  var noiseStrength = 0.12;
+  var motion = { raf: 0, timers: [], runId: 1, stage: stage };
+  _timematAiMotion = motion;
+
+  timeDots.forEach(function (d) { d.classList.remove('is-lit'); });
+  metaDots.forEach(function (d) { d.classList.remove('is-lit'); });
+
+  function sortLeftToRight(list) {
+    return list.slice().sort(function (a, b) {
+      var ax = parseFloat(a.getAttribute('data-cx') || a.getAttribute('cx') || '0');
+      var bx = parseFloat(b.getAttribute('data-cx') || b.getAttribute('cx') || '0');
+      if (ax !== bx) return ax - bx;
+      var ay = parseFloat(a.getAttribute('data-cy') || a.getAttribute('cy') || '0');
+      var by = parseFloat(b.getAttribute('data-cy') || b.getAttribute('cy') || '0');
+      return ay - by;
+    });
+  }
+
+  function schedule(fn, ms) {
+    var id = setTimeout(fn, ms);
+    motion.timers.push(id);
+    return id;
+  }
+
+  function revealDots(dots, startDelayMs, stepMs) {
+    var ordered = sortLeftToRight(dots);
+    ordered.forEach(function (dot, i) {
+      schedule(function () {
+        if (_timematAiMotion !== motion || motion.runId !== 1) return;
+        dot.classList.add('is-lit');
+      }, startDelayMs + i * stepMs);
+    });
+    return startDelayMs + ordered.length * stepMs + 120;
+  }
+
+  function waveFrame(startTs, nowTs) {
+    if (_timematAiMotion !== motion) return;
+    var elapsed = nowTs - startTs;
+    if (elapsed >= TIMEMAT_AI_WAVE_MS) {
+      bgDots.forEach(function (dot) {
+        dot.setAttribute('r', String(baseR));
+        dot.removeAttribute('transform');
+      });
+      bgGroup.removeAttribute('transform');
+      var nextAt = revealDots(timeDots, 0, 38);
+      revealDots(metaDots, nextAt, 38);
+      return;
+    }
+
+    var t = elapsed / 1000;
+    var travel = (elapsed / TIMEMAT_AI_WAVE_MS) * Math.PI * 5;
+    var densityScale = 1 - 0.022 * (0.5 + 0.5 * Math.sin(t * 4.1));
+    bgGroup.setAttribute('transform', 'translate(170 90) scale(' + densityScale + ') translate(-170 -90)');
+
+    bgDots.forEach(function (dot) {
+      var gx = parseFloat(dot.getAttribute('data-gx') || '0');
+      var gy = parseFloat(dot.getAttribute('data-gy') || '0');
+      var nx = (gx / Math.max(cols - 1, 1)) * 2 - 1;
+      var ny = (gy / Math.max(rows - 1, 1)) * 2 - 1;
+      var d2 = nx * nx + ny * ny;
+      var wave = Math.sin(nx * waveFrequency + ny * waveFrequency * 0.65 + travel);
+      var radialWave = Math.sin(Math.sqrt(Math.min(d2, 1)) * waveFrequency * 3.2 - travel * 1.15);
+      var n = _timematAiNoise(gx, gy, cols, rows, t);
+      var processing = 0.5 + wave * waveAmplitude + radialWave * waveAmplitude * 0.45 + n * noiseStrength;
+      if (processing < 0) processing = 0;
+      if (processing > 1) processing = 1;
+      var sizePulse = 0.72 + processing * 0.63;
+      dot.setAttribute('r', String(baseR * sizePulse));
+    });
+
+    motion.raf = requestAnimationFrame(function (ts) { waveFrame(startTs, ts); });
+  }
+
+  motion.raf = requestAnimationFrame(function (ts) { waveFrame(ts, ts); });
+}
+
+function renderDotTimeMatrixStackInnerHtml(variant) {
+  if (typeof window.renderAtomicForRole !== 'function') return '';
+  var tileRect = { w: DOT_TIMEMAT_W, h: DOT_TIMEMAT_H };
+  var comp = { role: 'dot-time-matrix', variant: variant || {} };
+  var tile = window.renderAtomicForRole(comp, tileRect);
+  return '' +
+    '<div class="dot-timemat-preview-stack" style="display:flex;flex-direction:column;align-items:flex-start;gap:' + DOT_TIMEMAT_DETAIL_GAP + 'px;width:' + DOT_TIMEMAT_W + 'px;">' +
+      '<div class="dot-timemat-preview-item" style="flex:0 0 ' + DOT_TIMEMAT_H + 'px;width:' + DOT_TIMEMAT_W + 'px;height:' + DOT_TIMEMAT_H + 'px;">' + tile + '</div>' +
+      '<div class="dot-timemat-preview-item" style="flex:0 0 ' + DOT_TIMEMAT_H + 'px;width:' + DOT_TIMEMAT_W + 'px;height:' + DOT_TIMEMAT_H + 'px;">' + tile + '</div>' +
+    '</div>';
+}
+
+function dotTimeMatrixPreviewStackH() {
+  return DOT_TIMEMAT_H * 2 + DOT_TIMEMAT_DETAIL_GAP;
+}
+
+function updatePreviewGridTimeMatrixCell(variant, previewIndex) {
+  var idx = previewIndex != null ? previewIndex : SELECTED_PREVIEW_INDEX;
+  if (idx == null || idx < 0) return;
+  var grid = $('preview-grid');
+  if (!grid) return;
+  var cell = grid.querySelector('.preview-cell[data-preview-index="' + idx + '"]');
+  if (!cell) return;
+  var card = PREVIEW_CARDS[idx];
+  if (!card || card.role !== 'dot-time-matrix') return;
+  var stage = cell.querySelector('.stage');
+  if (!stage) return;
+  var previewScale = TOOLKIT_PREVIEW_SCALE;
+  var useZoomPreview = shouldUseZoomPreviewForRole('dot-time-matrix');
+  var stackH = dotTimeMatrixPreviewStackH();
+  var scaleStyle = useZoomPreview
+    ? ('zoom:' + previewScale + ';transform:none;')
+    : ('transform:scale(' + previewScale + ');');
+  stage.innerHTML =
+    '<div class="stage-scale" style="width:' + DOT_TIMEMAT_W + 'px;min-height:' + stackH + 'px;height:auto;' + scaleStyle + '">' +
+      renderDotTimeMatrixStackInnerHtml(variant) +
+    '</div>';
+  stage.style.width = Math.ceil(DOT_TIMEMAT_W * previewScale) + 'px';
+  stage.style.height = Math.ceil(stackH * previewScale) + 'px';
+}
 
 function isDotWeather21LightPairCard(card) {
   return !!(card && card.role === 'dot-weather-2x1-v1-1' && (!card.variant || card.variant.theme !== 'dark'));
@@ -1404,8 +1574,10 @@ function renderPreviewGrid() {
     const previewScale = previewRect.scale || 1;
     const useZoomPreview = shouldUseZoomPreviewForRole(card && card.role);
     const isDotCameraCard = card.role === 'dot-camera';
-    const stageW = isDotCameraCard ? DOT_CAMERA_PREVIEW_SHELL : previewRect.w;
-    const stageH = isDotCameraCard ? DOT_CAMERA_PREVIEW_SHELL : previewRect.h;
+    const isDotTimeMatrixStack = card.role === 'dot-time-matrix';
+    const timeMatrixStackH = isDotTimeMatrixStack ? dotTimeMatrixPreviewStackH() : 0;
+    const stageW = isDotCameraCard ? DOT_CAMERA_PREVIEW_SHELL : (isDotTimeMatrixStack ? DOT_TIMEMAT_W : previewRect.w);
+    const stageH = isDotCameraCard ? DOT_CAMERA_PREVIEW_SHELL : (isDotTimeMatrixStack ? timeMatrixStackH : previewRect.h);
     let html = '';
     try {
       if (card.role === 'composite-set') {
@@ -1446,6 +1618,9 @@ function renderPreviewGrid() {
       } else if (isDotWeather21LightPairCard(card)) {
         html = renderDotWeather21PairHtml(card.variant);
         if (!html) html = '<div style="padding:20px;color:var(--text-3);">renderer not loaded</div>';
+      } else if (isDotTimeMatrixStack) {
+        html = renderDotTimeMatrixStackInnerHtml(card.variant || {});
+        if (!html) html = '<div style="padding:20px;color:var(--text-3);">renderer not loaded</div>';
       } else {
         const comp = { role: card.role, variant: card.variant, content: card.content || {} };
         if (typeof window.renderAtomicForRole === 'function') {
@@ -1467,11 +1642,13 @@ function renderPreviewGrid() {
     const scaleRoot = stage.firstElementChild;
     const cardRoot = scaleRoot && scaleRoot.firstElementChild;
     if (cardRoot && !isDotCameraCard) {
-      cardRoot.style.width = previewRect.w + 'px';
-      cardRoot.style.minHeight = previewRect.h + 'px';
+      var layoutW = isDotTimeMatrixStack ? DOT_TIMEMAT_W : previewRect.w;
+      var layoutH = isDotTimeMatrixStack ? timeMatrixStackH : previewRect.h;
+      cardRoot.style.width = layoutW + 'px';
+      cardRoot.style.minHeight = layoutH + 'px';
       // Dot cards rely heavily on absolute positioning (fixed-size layouts).
       // Forcing height:auto in the preview causes contents to collapse/squish.
-      if (useZoomPreview) cardRoot.style.height = previewRect.h + 'px';
+      if (useZoomPreview) cardRoot.style.height = layoutH + 'px';
       else cardRoot.style.height = 'auto';
       cardRoot.style.maxWidth = 'none';
       cardRoot.style.flex = 'none';
@@ -2778,10 +2955,10 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
   var grid = $('preview-grid');
   if (!grid || grid.__delegatesBound) return;
   grid.__delegatesBound = true;
-  function applyPreviewSelection(idx) {
+  function applyPreviewSelection(idx, opts) {
     console.log('Applying preview selection:', idx);
     SELECTED_PREVIEW_INDEX = idx;
-    updateDetailView(idx);
+    updateDetailView(idx, opts);
     renderPreviewGrid();
   }
 
@@ -2821,7 +2998,9 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
     }
   }
 
-  function updateDetailView(idx) {
+  function updateDetailView(idx, opts) {
+    opts = opts || {};
+    var aiIntro = !!opts.aiIntro;
     console.log('Updating detail view for idx:', idx);
     const detail = $('detail-view');
     const stage = $('detail-stage');
@@ -2831,6 +3010,9 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
       console.warn('Detail or stage not found');
       return;
     }
+
+    clearDotTimeMatrixAiMotion();
+    stage.classList.remove('is-timemat-ai-intro');
 
     const card = PREVIEW_CARDS[idx];
     if (!card) {
@@ -2892,6 +3074,23 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
       ? ('zoom:' + previewScale + ';transform:none;')
       : ('transform:scale(' + previewScale + ');');
 
+    if (controls) {
+      controls.innerHTML = '';
+      controls.style.display = 'none';
+    }
+
+    if (card && card.role === 'dot-time-matrix' && aiIntro && typeof window.renderAtomicForRole === 'function') {
+      var liveVariant = buildLiveTimeMatrixVariant(card.variant);
+      var aiHtml = window.renderAtomicForRole({ role: 'dot-time-matrix', variant: liveVariant }, rect);
+      stage.classList.add('is-timemat-ai-intro');
+      stage.innerHTML =
+        '<div class="stage-scale" style="width:' + rect.w + 'px;min-height:' + rect.h + 'px;height:auto;' + scaleStyle + '">' + aiHtml + '</div>';
+      stage.style.width = Math.ceil(rect.w * previewScale) + 'px';
+      stage.style.height = useZoomPreview ? Math.ceil(rect.h * previewScale) + 'px' : 'auto';
+      requestAnimationFrame(function () { startDotTimeMatrixAiMotion(stage); });
+      return;
+    }
+
     stage.innerHTML =
       '<div class="stage-scale" style="width:' + rect.w + 'px;' +
       'min-height:' + rect.h + 'px;height:auto;' +
@@ -2913,12 +3112,6 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
     const cardEls = stage.querySelectorAll('.dot-card, .focus-block, .notif-card, .now-bar, .media-card, .progress-track');
     cardEls.forEach(function (cardEl) { cardEl.setAttribute('data-state', 'idle'); });
     if (isDotWeather21LightPairCard(card)) mountDotPairRainMotionInStage(stage);
-
-    // Detail controls: dot-time-matrix time scrubber
-    if (controls) {
-      controls.innerHTML = '';
-      controls.style.display = 'none';
-    }
 
     if (card && card.role === 'dot-time-matrix' && controls && typeof window.renderAtomicForRole === 'function') {
       controls.style.display = 'flex';
@@ -2968,30 +3161,27 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
         return { hh: pad2(h12), mm: pad2(m), period: isAM ? 'AM' : 'PM' };
       }
 
-      // Crossfade between two renders for "animation" feel.
       var pendingRAF = 0;
       function updateTime() {
         var mins = parseInt(range.value, 10) || 0;
         var t = timeTextFromMinutes(mins);
         label.textContent = t.hh + ':' + t.mm + ' ' + t.period;
 
-        // Re-render stage with updated variant values.
-        var next = {
-          role: 'dot-time-matrix',
-          variant: Object.assign({}, (card && card.variant) || {}, {
-            time: t.hh + ':' + t.mm,
-            meta: t.period + ' ' + (['SUN','MON','TUE','WED','THU','FRI','SAT'][(new Date()).getDay()]),
-          })
-        };
+        var nextVariant = Object.assign({}, (card && card.variant) || {}, {
+          time: t.hh + ':' + t.mm,
+          meta: t.period + ' ' + (['SUN','MON','TUE','WED','THU','FRI','SAT'][(new Date()).getDay()]),
+        });
+        var next = { role: 'dot-time-matrix', variant: nextVariant };
         var nextHtml = window.renderAtomicForRole(next, rect);
 
-        // lightweight crossfade
         stage.style.transition = 'opacity 140ms ease';
         stage.style.opacity = '0.0';
         if (pendingRAF) cancelAnimationFrame(pendingRAF);
         pendingRAF = requestAnimationFrame(function () {
-          stage.innerHTML = nextHtml;
+          stage.innerHTML =
+            '<div class="stage-scale" style="width:' + rect.w + 'px;min-height:' + rect.h + 'px;height:auto;' + scaleStyle + '">' + nextHtml + '</div>';
           stage.style.opacity = '1';
+          updatePreviewGridTimeMatrixCell(nextVariant, idx);
         });
       }
 
@@ -3008,6 +3198,24 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
 
   grid.addEventListener('click', function (e) {
     if (e.detail !== 1) return;
+
+    var bottomTimemat = e.target.closest('.dot-timemat-preview-stack > .dot-timemat-preview-item:last-child');
+    if (bottomTimemat) {
+      var cellAi = e.target.closest('.preview-cell');
+      if (cellAi && grid.contains(cellAi)) {
+        var rawAi = cellAi.getAttribute('data-preview-index');
+        if (rawAi != null && rawAi !== '') {
+          var idxAi = parseInt(rawAi, 10);
+          if (!isNaN(idxAi)) {
+            e.preventDefault();
+            e.stopPropagation();
+            applyPreviewSelection(idxAi, { aiIntro: true });
+            return;
+          }
+        }
+      }
+    }
+
     const handled = handleCompositeMusicClick(e);
     if (handled) return;
 
