@@ -2847,16 +2847,16 @@
   .detail-stage.is-timemat-ai-intro .dot-timemat__dot {
     opacity: 0;
     animation: none;
-    transform: scale(0.52);
+    transform: scale(0.86);
     transform-box: fill-box;
     transform-origin: center;
   }
   .detail-stage.is-timemat-ai-intro .dot-timemat__dot.is-lit {
-    animation: dotTimematStampIn 150ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    animation: dotTimematRowPulse 135ms cubic-bezier(0.24, 0.92, 0.32, 1) forwards;
   }
-  @keyframes dotTimematStampIn {
-    0% { opacity: 0; transform: scale(0.48); }
-    58% { opacity: 1; transform: scale(1.1); }
+  @keyframes dotTimematRowPulse {
+    0% { opacity: 0; transform: scale(0.84); }
+    42% { opacity: 0.92; transform: scale(1.03); }
     100% { opacity: 1; transform: scale(1); }
   }
 

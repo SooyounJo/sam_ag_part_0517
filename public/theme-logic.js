@@ -132,15 +132,22 @@ function startDotTimeMatrixAiMotion(stage) {
     }
   });
 
-  function sortLeftToRight(list) {
-    return list.slice().sort(function (a, b) {
-      var ax = parseFloat(a.getAttribute('data-cx') || a.getAttribute('cx') || '0');
-      var bx = parseFloat(b.getAttribute('data-cx') || b.getAttribute('cx') || '0');
-      if (ax !== bx) return ax - bx;
-      var ay = parseFloat(a.getAttribute('data-cy') || a.getAttribute('cy') || '0');
-      var by = parseFloat(b.getAttribute('data-cy') || b.getAttribute('cy') || '0');
-      return ay - by;
+  function groupDotsByRow(dots) {
+    var rowMap = {};
+    dots.forEach(function (dot) {
+      var cy = dot.getAttribute('data-cy') || dot.getAttribute('cy') || '0';
+      if (!rowMap[cy]) rowMap[cy] = [];
+      rowMap[cy].push(dot);
     });
+    return Object.keys(rowMap)
+      .sort(function (a, b) { return parseFloat(a) - parseFloat(b); })
+      .map(function (cy) {
+        return rowMap[cy].sort(function (a, b) {
+          var ax = parseFloat(a.getAttribute('data-cx') || a.getAttribute('cx') || '0');
+          var bx = parseFloat(b.getAttribute('data-cx') || b.getAttribute('cx') || '0');
+          return ax - bx;
+        });
+      });
   }
 
   function schedule(fn, ms) {
@@ -149,15 +156,21 @@ function startDotTimeMatrixAiMotion(stage) {
     return id;
   }
 
-  function revealDots(dots, startDelayMs, stepMs) {
-    var ordered = sortLeftToRight(dots);
-    ordered.forEach(function (dot, i) {
-      schedule(function () {
-        if (_timematAiMotion !== motion || motion.runId !== 1) return;
-        dot.classList.add('is-lit');
-      }, startDelayMs + i * stepMs);
+  function revealRows(dots, startDelayMs, rowStepMs, inRowStepMs) {
+    var rowGroups = groupDotsByRow(dots);
+    var maxAt = startDelayMs;
+    rowGroups.forEach(function (row, rowIndex) {
+      var rowStart = startDelayMs + rowIndex * rowStepMs;
+      row.forEach(function (dot, dotIndex) {
+        var at = rowStart + dotIndex * inRowStepMs;
+        schedule(function () {
+          if (_timematAiMotion !== motion || motion.runId !== 1) return;
+          dot.classList.add('is-lit');
+        }, at);
+        if (at > maxAt) maxAt = at;
+      });
     });
-    return startDelayMs + ordered.length * stepMs + 120;
+    return maxAt + 100;
   }
 
   function waveFrame(startTs, nowTs) {
@@ -166,9 +179,10 @@ function startDotTimeMatrixAiMotion(stage) {
 
     if (!motion.revealStarted && elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
       motion.revealStarted = true;
-      var revealStep = 18;
-      revealDots(timeDots, 0, revealStep);
-      revealDots(metaDots, timeDots.length * revealStep + 64, revealStep);
+      var rowStep = 82;
+      var inRowStep = 10;
+      var metaStart = revealRows(timeDots, 0, rowStep, inRowStep) + 72;
+      revealRows(metaDots, metaStart, rowStep, inRowStep);
     }
 
     if (elapsed >= TIMEMAT_AI_WIND_END_MS) {
