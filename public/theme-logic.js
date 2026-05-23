@@ -113,7 +113,9 @@ function startDotTimeMatrixAiMotion(stage) {
   var processDotColor = '#FF7500';
   var processDotOpacityMin = 0.22;
   var processDotOpacityMax = 1;
-  var dotGrowMs = 150;
+  var dotGrowMs = 240;
+  var dotGrowStartR = 0.16;
+  var dotGrowPeakScale = 1.12;
   var motion = { raf: 0, timers: [], runId: 1, stage: stage, revealStarted: false };
   _timematAiMotion = motion;
 
@@ -123,7 +125,7 @@ function startDotTimeMatrixAiMotion(stage) {
     if (!d.getAttribute('data-target-r')) {
       d.setAttribute('data-target-r', d.getAttribute('r') || String(baseR));
     }
-    d.setAttribute('r', String(parseFloat(d.getAttribute('data-target-r')) * 0.06));
+    d.setAttribute('r', String(dotGrowStartR));
     d.setAttribute('fill-opacity', '0');
   });
   metaDots.forEach(function (d) {
@@ -132,7 +134,7 @@ function startDotTimeMatrixAiMotion(stage) {
     if (!d.getAttribute('data-target-r')) {
       d.setAttribute('data-target-r', d.getAttribute('r') || String(baseR));
     }
-    d.setAttribute('r', String(parseFloat(d.getAttribute('data-target-r')) * 0.06));
+    d.setAttribute('r', String(dotGrowStartR));
     d.setAttribute('fill-opacity', '0');
   });
   bgGroup.style.transition = '';
@@ -171,12 +173,12 @@ function startDotTimeMatrixAiMotion(stage) {
     if (_timematAiMotion !== motion || motion.runId !== 1) return;
     dot.classList.add('is-lit');
     var targetR = parseFloat(dot.getAttribute('data-target-r') || String(baseR));
-    var startR = targetR * 0.06;
-    var peakR = targetR * 1.05;
+    var startR = dotGrowStartR;
+    var peakR = targetR * dotGrowPeakScale;
     var growStart = performance.now();
 
-    function easeOutCubic(t) {
-      return 1 - Math.pow(1 - t, 3);
+    function easeOutQuart(t) {
+      return 1 - Math.pow(1 - t, 4);
     }
 
     function growFrame(now) {
@@ -184,14 +186,14 @@ function startDotTimeMatrixAiMotion(stage) {
       var p = Math.min((now - growStart) / dotGrowMs, 1);
       var rVal;
       var opacity;
-      if (p < 0.55) {
-        var pGrow = p / 0.55;
-        var eased = easeOutCubic(pGrow);
+      if (p < 0.68) {
+        var pGrow = p / 0.68;
+        var eased = easeOutQuart(pGrow);
         rVal = startR + (peakR - startR) * eased;
-        opacity = eased;
+        opacity = Math.min(eased * 1.15, 1);
       } else {
-        var pSettle = (p - 0.55) / 0.45;
-        rVal = peakR + (targetR - peakR) * easeOutCubic(pSettle);
+        var pSettle = (p - 0.68) / 0.32;
+        rVal = peakR + (targetR - peakR) * easeOutQuart(pSettle);
         opacity = 1;
       }
       dot.setAttribute('r', rVal.toFixed(3));
@@ -226,9 +228,9 @@ function startDotTimeMatrixAiMotion(stage) {
 
     if (!motion.revealStarted && elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
       motion.revealStarted = true;
-      var rowStep = 82;
-      var inRowStep = 10;
-      var metaStart = revealRows(timeDots, 0, rowStep, inRowStep) + 72;
+      var rowStep = 96;
+      var inRowStep = 12;
+      var metaStart = revealRows(timeDots, 0, rowStep, inRowStep) + 88;
       revealRows(metaDots, metaStart, rowStep, inRowStep);
     }
 
