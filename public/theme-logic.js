@@ -110,6 +110,9 @@ function startDotTimeMatrixAiMotion(stage) {
   var waveFrequency = 2;
   var waveAmplitude = 0.6;
   var noiseStrength = 0.12;
+  var processDotColor = '#FF7500';
+  var processDotOpacityMin = 0.22;
+  var processDotOpacityMax = 1;
   var motion = { raf: 0, timers: [], runId: 1, stage: stage, revealStarted: false };
   _timematAiMotion = motion;
 
@@ -122,7 +125,12 @@ function startDotTimeMatrixAiMotion(stage) {
     d.style.transition = '';
   });
   bgGroup.style.transition = '';
-  bgDots.forEach(function (dot) { dot.style.transition = ''; });
+  bgDots.forEach(function (dot) {
+    dot.style.transition = '';
+    if (!dot.getAttribute('data-bg-fill')) {
+      dot.setAttribute('data-bg-fill', dot.getAttribute('fill') || 'rgba(255,255,255,0.16)');
+    }
+  });
 
   function sortLeftToRight(list) {
     return list.slice().sort(function (a, b) {
@@ -166,6 +174,8 @@ function startDotTimeMatrixAiMotion(stage) {
     if (elapsed >= TIMEMAT_AI_WIND_END_MS) {
       bgDots.forEach(function (dot) {
         dot.setAttribute('r', String(baseR));
+        dot.setAttribute('fill', dot.getAttribute('data-bg-fill') || 'rgba(255,255,255,0.16)');
+        dot.removeAttribute('fill-opacity');
       });
       bgGroup.setAttribute('transform', 'translate(170 90) scale(1) translate(-170 -90)');
       return;
@@ -198,7 +208,11 @@ function startDotTimeMatrixAiMotion(stage) {
       if (processing > 1) processing = 1;
       var pulseSize = 0.34 + processing * 1.02;
       var sizeMult = pulseSize * wind + (1 - wind);
+      var colorMix = processing * wind;
+      var dotOpacity = processDotOpacityMin + colorMix * (processDotOpacityMax - processDotOpacityMin);
       dot.setAttribute('r', String(baseR * sizeMult));
+      dot.setAttribute('fill', processDotColor);
+      dot.setAttribute('fill-opacity', dotOpacity.toFixed(3));
     });
 
     motion.raf = requestAnimationFrame(function (ts) { waveFrame(startTs, ts); });
