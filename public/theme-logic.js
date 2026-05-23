@@ -51,7 +51,16 @@ var DOT_TIMEMAT_W = 340;
 var DOT_TIMEMAT_H = 180;
 var DOT_TIMEMAT_DETAIL_GAP = 24;
 var TIMEMAT_AI_WAVE_MS = 5000;
+var TIMEMAT_AI_REVEAL_AT_MS = 4000;
+var TIMEMAT_AI_WIND_START_MS = 4000;
+var TIMEMAT_AI_WIND_END_MS = 5000;
 var _timematAiMotion = null;
+
+function _timematAiSmoothstep(x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  return x * x * (3 - 2 * x);
+}
 
 function buildLiveTimeMatrixVariant(baseVariant) {
   var now = new Date();
@@ -102,11 +111,19 @@ function startDotTimeMatrixAiMotion(stage) {
   var waveFrequency = 2;
   var waveAmplitude = 0.6;
   var noiseStrength = 0.12;
-  var motion = { raf: 0, timers: [], runId: 1, stage: stage };
+  var motion = { raf: 0, timers: [], runId: 1, stage: stage, revealStarted: false };
   _timematAiMotion = motion;
 
-  timeDots.forEach(function (d) { d.classList.remove('is-lit'); });
-  metaDots.forEach(function (d) { d.classList.remove('is-lit'); });
+  timeDots.forEach(function (d) {
+    d.classList.remove('is-lit');
+    d.style.transition = '';
+  });
+  metaDots.forEach(function (d) {
+    d.classList.remove('is-lit');
+    d.style.transition = '';
+  });
+  bgGroup.style.transition = '';
+  bgDots.forEach(function (dot) { dot.style.transition = ''; });
 
   function sortLeftToRight(list) {
     return list.slice().sort(function (a, b) {
@@ -139,20 +156,33 @@ function startDotTimeMatrixAiMotion(stage) {
   function waveFrame(startTs, nowTs) {
     if (_timematAiMotion !== motion) return;
     var elapsed = nowTs - startTs;
-    if (elapsed >= TIMEMAT_AI_WAVE_MS) {
+
+    if (!motion.revealStarted && elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
+      motion.revealStarted = true;
+      var revealStep = 40;
+      revealDots(timeDots, 0, revealStep);
+      revealDots(metaDots, timeDots.length * revealStep + 180, revealStep);
+    }
+
+    if (elapsed >= TIMEMAT_AI_WIND_END_MS) {
       bgDots.forEach(function (dot) {
         dot.setAttribute('r', String(baseR));
-        dot.removeAttribute('transform');
       });
-      bgGroup.removeAttribute('transform');
-      var nextAt = revealDots(timeDots, 0, 38);
-      revealDots(metaDots, nextAt, 38);
+      bgGroup.setAttribute('transform', 'translate(170 90) scale(1) translate(-170 -90)');
       return;
+    }
+
+    var wind = 1;
+    if (elapsed > TIMEMAT_AI_WIND_START_MS) {
+      wind = 1 - _timematAiSmoothstep(
+        (elapsed - TIMEMAT_AI_WIND_START_MS) / (TIMEMAT_AI_WIND_END_MS - TIMEMAT_AI_WIND_START_MS)
+      );
     }
 
     var t = elapsed / 1000;
     var travel = (elapsed / TIMEMAT_AI_WAVE_MS) * Math.PI * 5;
-    var densityScale = 1 - 0.022 * (0.5 + 0.5 * Math.sin(t * 4.1));
+    var amp = waveAmplitude * wind;
+    var densityScale = 1 - wind * 0.022 * (0.5 + 0.5 * Math.sin(t * 4.1));
     bgGroup.setAttribute('transform', 'translate(170 90) scale(' + densityScale + ') translate(-170 -90)');
 
     bgDots.forEach(function (dot) {
@@ -164,11 +194,12 @@ function startDotTimeMatrixAiMotion(stage) {
       var wave = Math.sin(nx * waveFrequency + ny * waveFrequency * 0.65 + travel);
       var radialWave = Math.sin(Math.sqrt(Math.min(d2, 1)) * waveFrequency * 3.2 - travel * 1.15);
       var n = _timematAiNoise(gx, gy, cols, rows, t);
-      var processing = 0.5 + wave * waveAmplitude + radialWave * waveAmplitude * 0.45 + n * noiseStrength;
+      var processing = 0.5 + wave * amp + radialWave * amp * 0.45 + n * noiseStrength * wind;
       if (processing < 0) processing = 0;
       if (processing > 1) processing = 1;
-      var sizePulse = 0.72 + processing * 0.63;
-      dot.setAttribute('r', String(baseR * sizePulse));
+      var pulseSize = 0.34 + processing * 1.02;
+      var sizeMult = pulseSize * wind + (1 - wind);
+      dot.setAttribute('r', String(baseR * sizeMult));
     });
 
     motion.raf = requestAnimationFrame(function (ts) { waveFrame(startTs, ts); });
