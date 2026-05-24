@@ -255,20 +255,20 @@ function startDotTimeMatrixAiMotion(stage) {
     }
   });
 
-  function groupDotsByColumn(dots) {
-    var colMap = {};
+  function groupDotsByRow(dots) {
+    var rowMap = {};
     dots.forEach(function (dot) {
-      var cx = dot.getAttribute('data-cx') || dot.getAttribute('cx') || '0';
-      if (!colMap[cx]) colMap[cx] = [];
-      colMap[cx].push(dot);
+      var cy = dot.getAttribute('data-cy') || dot.getAttribute('cy') || '0';
+      if (!rowMap[cy]) rowMap[cy] = [];
+      rowMap[cy].push(dot);
     });
-    return Object.keys(colMap)
+    return Object.keys(rowMap)
       .sort(function (a, b) { return parseFloat(a) - parseFloat(b); })
-      .map(function (cx) {
-        return colMap[cx].sort(function (a, b) {
-          var ay = parseFloat(a.getAttribute('data-cy') || a.getAttribute('cy') || '0');
-          var by = parseFloat(b.getAttribute('data-cy') || b.getAttribute('cy') || '0');
-          return ay - by;
+      .map(function (cy) {
+        return rowMap[cy].sort(function (a, b) {
+          var ax = parseFloat(a.getAttribute('data-cx') || a.getAttribute('cx') || '0');
+          var bx = parseFloat(b.getAttribute('data-cx') || b.getAttribute('cx') || '0');
+          return ax - bx;
         });
       });
   }
@@ -323,13 +323,13 @@ function startDotTimeMatrixAiMotion(stage) {
     requestAnimationFrame(growFrame);
   }
 
-  function revealColumns(dots, startDelayMs, colStepMs, inColStepMs) {
-    var colGroups = groupDotsByColumn(dots);
+  function revealRows(dots, startDelayMs, rowStepMs, inRowStepMs) {
+    var rowGroups = groupDotsByRow(dots);
     var maxAt = startDelayMs;
-    colGroups.forEach(function (col, colIndex) {
-      var colStart = startDelayMs + colIndex * colStepMs;
-      col.forEach(function (dot, dotIndex) {
-        var at = colStart + dotIndex * inColStepMs;
+    rowGroups.forEach(function (row, rowIndex) {
+      var rowStart = startDelayMs + rowIndex * rowStepMs;
+      row.forEach(function (dot, dotIndex) {
+        var at = rowStart + dotIndex * inRowStepMs;
         schedule(function () { growDotIn(dot); }, at);
         if (at > maxAt) maxAt = at;
       });
@@ -347,9 +347,10 @@ function startDotTimeMatrixAiMotion(stage) {
 
     if (!motion.revealStarted && elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
       motion.revealStarted = true;
-      var colStep = 96;
-      var inColStep = 12;
-      revealColumns(timeDots.concat(metaDots), 180, colStep, inColStep);
+      var rowStep = 96;
+      var inRowStep = 12;
+      revealRows(timeDots, 180, rowStep, inRowStep);
+      revealRows(metaDots, 180 + rowStep + 36, rowStep, inRowStep);
     }
 
     if (elapsed >= TIMEMAT_AI_WIND_END_MS) {
