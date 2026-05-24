@@ -145,20 +145,20 @@ function startDotTimeMatrixAiMotion(stage) {
     }
   });
 
-  function groupDotsByRow(dots) {
-    var rowMap = {};
+  function groupDotsByColumn(dots) {
+    var colMap = {};
     dots.forEach(function (dot) {
-      var cy = dot.getAttribute('data-cy') || dot.getAttribute('cy') || '0';
-      if (!rowMap[cy]) rowMap[cy] = [];
-      rowMap[cy].push(dot);
+      var cx = dot.getAttribute('data-cx') || dot.getAttribute('cx') || '0';
+      if (!colMap[cx]) colMap[cx] = [];
+      colMap[cx].push(dot);
     });
-    return Object.keys(rowMap)
+    return Object.keys(colMap)
       .sort(function (a, b) { return parseFloat(a) - parseFloat(b); })
-      .map(function (cy) {
-        return rowMap[cy].sort(function (a, b) {
-          var ax = parseFloat(a.getAttribute('data-cx') || a.getAttribute('cx') || '0');
-          var bx = parseFloat(b.getAttribute('data-cx') || b.getAttribute('cx') || '0');
-          return ax - bx;
+      .map(function (cx) {
+        return colMap[cx].sort(function (a, b) {
+          var ay = parseFloat(a.getAttribute('data-cy') || a.getAttribute('cy') || '0');
+          var by = parseFloat(b.getAttribute('data-cy') || b.getAttribute('cy') || '0');
+          return ay - by;
         });
       });
   }
@@ -208,13 +208,13 @@ function startDotTimeMatrixAiMotion(stage) {
     requestAnimationFrame(growFrame);
   }
 
-  function revealRows(dots, startDelayMs, rowStepMs, inRowStepMs) {
-    var rowGroups = groupDotsByRow(dots);
+  function revealColumns(dots, startDelayMs, colStepMs, inColStepMs) {
+    var colGroups = groupDotsByColumn(dots);
     var maxAt = startDelayMs;
-    rowGroups.forEach(function (row, rowIndex) {
-      var rowStart = startDelayMs + rowIndex * rowStepMs;
-      row.forEach(function (dot, dotIndex) {
-        var at = rowStart + dotIndex * inRowStepMs;
+    colGroups.forEach(function (col, colIndex) {
+      var colStart = startDelayMs + colIndex * colStepMs;
+      col.forEach(function (dot, dotIndex) {
+        var at = colStart + dotIndex * inColStepMs;
         schedule(function () { growDotIn(dot); }, at);
         if (at > maxAt) maxAt = at;
       });
@@ -228,10 +228,9 @@ function startDotTimeMatrixAiMotion(stage) {
 
     if (!motion.revealStarted && elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
       motion.revealStarted = true;
-      var rowStep = 96;
-      var inRowStep = 12;
-      var metaStart = revealRows(timeDots, 0, rowStep, inRowStep) + 88;
-      revealRows(metaDots, metaStart, rowStep, inRowStep);
+      var colStep = 96;
+      var inColStep = 12;
+      revealColumns(timeDots.concat(metaDots), 0, colStep, inColStep);
     }
 
     if (elapsed >= TIMEMAT_AI_WIND_END_MS) {
@@ -263,7 +262,10 @@ function startDotTimeMatrixAiMotion(stage) {
       var nx = (gx / Math.max(cols - 1, 1)) * 2 - 1;
       var ny = (gy / Math.max(rows - 1, 1)) * 2 - 1;
       var d2 = nx * nx + ny * ny;
-      var wave = Math.sin(nx * waveFrequency + ny * waveFrequency * 0.65 + travel);
+      var rot = travel;
+      var rx = nx * Math.cos(rot) - ny * Math.sin(rot);
+      var ry = nx * Math.sin(rot) + ny * Math.cos(rot);
+      var wave = Math.sin(rx * waveFrequency + ry * waveFrequency * 0.65);
       var radialWave = Math.sin(Math.sqrt(Math.min(d2, 1)) * waveFrequency * 3.2 - travel * 1.15);
       var n = _timematAiNoise(gx, gy, cols, rows, t);
       var processing = 0.5 + wave * amp + radialWave * amp * 0.45 + n * noiseStrength * wind;
