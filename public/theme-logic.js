@@ -66,7 +66,7 @@ var TIMEMAT_AI_BG_FADE_MS = 420;
 var TIMEMAT_AI_LETTER_DELAY_MS = 0;
 var TIMEMAT_AI_PROCESS_R_SCALE = 0.55;
 var TIMEMAT_AI_LETTER_TRAVEL_MS = 640;
-var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v32';
+var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v34';
 var _timematAiMotion = null;
 
 function _timematAiLerpRgb(r1, g1, b1, r2, g2, b2, t) {
@@ -474,15 +474,16 @@ function startDotTimeMatrixAiMotion(stage) {
     var processing = heat * tone + grain * 0.022;
     if (processing < 0) processing = 0;
     if (processing > 1) processing = 1;
-    var heatSq = heat * heat;
-    var pulseSize = 0.12 + (1 - heat) * 0.07 + heatSq * (0.58 + frame.amp * 0.20);
+    var hotCore = Math.pow(heat, 2.5);
+    var growR = frame.processR + (frame.baseR - frame.processR) * frame.growEase;
+    var dimR = growR * (0.30 + (1 - heat) * 0.06);
+    var coreR = frame.baseR;
+    var waveR = dimR + hotCore * (coreR - dimR);
     var waveKeep = frame.revealStarted ? Math.max(0.82, 1 - settle * 0.12) : 1;
-    var sizeMult = pulseSize * waveKeep + (1 - waveKeep);
+    waveR = waveR * waveKeep + growR * (1 - waveKeep);
     var colorMix = Math.pow(processing, 0.94) * (frame.revealStarted ? Math.max(0.68, 1 - settle * 0.18) : 1);
     var dotOpacity = processDotOpacityMin + colorMix * (processDotOpacityMax - processDotOpacityMin);
     var dotWhiteBlend = Math.min(1, frame.whitePhase * (0.08 + Math.pow(processing, 1.14) * 0.72));
-    var growR = frame.processR + (frame.baseR - frame.processR) * frame.growEase;
-    var waveR = growR * sizeMult;
     return {
       waveR: waveR,
       dotOpacity: dotOpacity,
