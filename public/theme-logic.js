@@ -66,7 +66,7 @@ var TIMEMAT_AI_BG_FADE_MS = 420;
 var TIMEMAT_AI_LETTER_DELAY_MS = 0;
 var TIMEMAT_AI_PROCESS_R_SCALE = 0.55;
 var TIMEMAT_AI_LETTER_TRAVEL_MS = 640;
-var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v34';
+var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v40';
 var _timematAiMotion = null;
 
 function _timematAiLerpRgb(r1, g1, b1, r2, g2, b2, t) {
@@ -483,11 +483,22 @@ function startDotTimeMatrixAiMotion(stage) {
     waveR = waveR * waveKeep + growR * (1 - waveKeep);
     var colorMix = Math.pow(processing, 0.94) * (frame.revealStarted ? Math.max(0.68, 1 - settle * 0.18) : 1);
     var dotOpacity = processDotOpacityMin + colorMix * (processDotOpacityMax - processDotOpacityMin);
-    var dotWhiteBlend = Math.min(1, frame.whitePhase * (0.08 + Math.pow(processing, 1.14) * 0.72));
+    var hiFalloff = falloff * 0.26;
+    var hiT = dist / hiFalloff;
+    var whiteField = Math.pow(1 / (1 + hiT * hiT * 0.75), 1.32);
+    var nest = whiteField * Math.pow(heat, 0.68);
+    var coreWhite = Math.min(1, Math.pow(nest, 0.88));
+    var ring = Math.pow(heat, 1.02) * (1 - coreWhite) * 0.50;
+    var baseG = Math.round(117 + 78 * ring);
+    var baseB = Math.round(8 + 118 * ring);
+    var dotFill = _timematAiLerpRgb(255, baseG, baseB, 255, 255, 255, coreWhite);
+    var dotWhiteBlend = coreWhite;
+    dotOpacity = Math.min(1, dotOpacity + coreWhite * 0.06);
     return {
       waveR: waveR,
       dotOpacity: dotOpacity,
       dotWhiteBlend: dotWhiteBlend,
+      dotFill: dotFill,
       processing: processing
     };
   }
@@ -802,8 +813,13 @@ function startDotTimeMatrixAiMotion(stage) {
     var whitePhase = _timematAiSmoothstep(
       Math.min(Math.max((elapsed - TIMEMAT_AI_HIGHLIGHT_START * TIMEMAT_AI_WAVE_MS) / 2300, 0), 1)
     );
+    var highlightPhase = _timematAiSmoothstep(
+      Math.min(Math.max((elapsed - 1600) / 1400, 0), 1)
+    );
+    highlightPhase = Math.max(highlightPhase, whitePhase);
     if (motion.revealStarted && !letterPhaseActive) {
       whitePhase = Math.max(0.80, 1 - settleEase * 0.10);
+      highlightPhase = Math.max(highlightPhase, whitePhase);
     }
     var travelRot = t * Math.PI;
     motion.currentTravel = travelRot;
@@ -852,6 +868,7 @@ function startDotTimeMatrixAiMotion(stage) {
       wind: wind,
       growEase: growEase,
       whitePhase: whitePhase,
+      highlightPhase: highlightPhase,
       waveSettle: waveSettle,
       revealStarted: motion.revealStarted,
       processR: motion.processR,
@@ -914,7 +931,7 @@ function startDotTimeMatrixAiMotion(stage) {
         var fadeP = Math.min(Math.max((elapsed - fadeStart) / fadeDur, 0), 1);
         if (fadeP <= 0) {
           setDotAttr(dot, 'r', String(waveVis.waveR));
-          setDotAttr(dot, 'fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
+          setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
           setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
           return;
         }
@@ -930,7 +947,7 @@ function startDotTimeMatrixAiMotion(stage) {
       }
 
       setDotAttr(dot, 'r', String(waveVis.waveR));
-      setDotAttr(dot, 'fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
+      setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
       setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
     });
 
