@@ -66,7 +66,7 @@ var TIMEMAT_AI_BG_FADE_MS = 420;
 var TIMEMAT_AI_LETTER_DELAY_MS = 0;
 var TIMEMAT_AI_PROCESS_R_SCALE = 0.55;
 var TIMEMAT_AI_LETTER_TRAVEL_MS = 560;
-var TIMEMAT_AI_IMPL_REV = '20250524-travel-v14';
+var TIMEMAT_AI_IMPL_REV = '20250524-fade-v17';
 var _timematAiMotion = null;
 
 function _timematAiLerpRgb(r1, g1, b1, r2, g2, b2, t) {
@@ -433,6 +433,13 @@ function startDotTimeMatrixAiMotion(stage) {
     return parsed;
   }
 
+  function setDotAttr(dot, name, val) {
+    var ck = '_c' + name;
+    if (dot[ck] === val) return;
+    dot[ck] = val;
+    dot.setAttribute(name, val);
+  }
+
   function prepareRevealPlan() {
     var timeRows = groupDotsByRow(timeDots);
     var metaRows = groupDotsByRow(metaDots);
@@ -487,10 +494,6 @@ function startDotTimeMatrixAiMotion(stage) {
     getProcessDotPool().forEach(function (dot) {
       if (!claimed.has(dot)) spareDots.push(dot);
     });
-    spareDots.forEach(function (dot, i) {
-      dot.setAttribute('data-form-state', 'fade');
-      dot.setAttribute('data-fade-start', String(TIMEMAT_AI_BG_SETTLE_START_MS + 220 + i * 5));
-    });
 
     var timing = _timematAiRevealRowTiming(timeRows.length, metaRows.length, 1);
     motion.revealTiming = timing;
@@ -517,6 +520,16 @@ function startDotTimeMatrixAiMotion(stage) {
         if (fireAt > lastFireAt) lastFireAt = fireAt;
         motion.scheduledTravels.push({ fireAt: fireAt, job: job });
       });
+    });
+
+    var spareFadeEnd = lastFireAt + TIMEMAT_AI_LETTER_TRAVEL_MS * 0.55;
+    var spareFadeSpan = Math.max(spareFadeEnd - letterBase, 1);
+    var spareCount = spareDots.length;
+    spareDots.forEach(function (dot, i) {
+      dot.setAttribute('data-form-state', 'fade');
+      var stagger = spareCount > 1 ? (i / (spareCount - 1)) * spareFadeSpan : 0;
+      dot.setAttribute('data-fade-start', String(Math.round(letterBase + stagger)));
+      dot.setAttribute('data-fade-dur', '260');
     });
 
     motion.motionEndMs = lastFireAt + TIMEMAT_AI_LETTER_TRAVEL_MS + TIMEMAT_AI_MOTION_END_PAD_MS;
@@ -554,6 +567,9 @@ function startDotTimeMatrixAiMotion(stage) {
       targetCx: job.targetCx,
       targetCy: job.targetCy,
       targetR: job.targetR,
+      dCx: job.targetCx - startCx,
+      dCy: job.targetCy - startCy,
+      dR: job.targetR - startR,
       travelMs: job.travelMs || dotFormMs,
       startTs: nowTs
     });
@@ -572,18 +588,21 @@ function startDotTimeMatrixAiMotion(stage) {
       var job = motion.travelForms[i];
       var p = Math.max(0, Math.min((nowTs - job.startTs) / (job.travelMs || dotFormMs), 1));
       var eased = easeOut(p);
-      var cx = job.startCx + (job.targetCx - job.startCx) * eased;
-      var cy = job.startCy + (job.targetCy - job.startCy) * eased;
-      var rVal = job.startR + (job.targetR - job.startR) * eased;
+      var cx = job.startCx + job.dCx * eased;
+      var cy = job.startCy + job.dCy * eased;
+      var rVal = job.startR + job.dR * eased;
       var sr = job.startFill;
       var tr = job.targetFill;
       var fill = _timematAiLerpRgb(sr.r, sr.g, sr.b, tr.r, tr.g, tr.b, eased);
       var fillOpacity = (sr.a + (tr.a - sr.a) * eased).toFixed(3);
-      job.procDot.setAttribute('cx', cx.toFixed(2));
-      job.procDot.setAttribute('cy', cy.toFixed(2));
-      job.procDot.setAttribute('r', rVal.toFixed(3));
-      job.procDot.setAttribute('fill', fill);
-      job.procDot.setAttribute('fill-opacity', fillOpacity);
+      var cxStr = cx.toFixed(2);
+      var cyStr = cy.toFixed(2);
+      var rStr = rVal.toFixed(3);
+      setDotAttr(job.procDot, 'cx', cxStr);
+      setDotAttr(job.procDot, 'cy', cyStr);
+      setDotAttr(job.procDot, 'r', rStr);
+      setDotAttr(job.procDot, 'fill', fill);
+      setDotAttr(job.procDot, 'fill-opacity', fillOpacity);
       if (p < 1) {
         nextForms.push(job);
         continue;
@@ -684,13 +703,21 @@ function startDotTimeMatrixAiMotion(stage) {
       amp *= wind;
     }
     var densityScale = 1 - (motion.revealStarted ? settleEase * 0.006 : wind * 0.022) * (0.5 + 0.5 * Math.sin(t * 4.1));
-    bgGroup.setAttribute('transform', 'translate(170 90) scale(' + densityScale + ') translate(-170 -90)');
+    var bgTransform = 'translate(170 90) scale(' + densityScale + ') translate(-170 -90)';
+    if (motion.bgTransform !== bgTransform) {
+      motion.bgTransform = bgTransform;
+      bgGroup.setAttribute('transform', bgTransform);
+    }
 
     if (motion.baseGridGroup && elapsed >= TIMEMAT_AI_BG_SETTLE_START_MS) {
       var baseFade = _timematAiSmoothstep(
         Math.min((elapsed - TIMEMAT_AI_BG_SETTLE_START_MS) / TIMEMAT_AI_BG_FADE_MS, 1)
       );
-      motion.baseGridGroup.setAttribute('opacity', baseFade.toFixed(3));
+      var baseFadeStr = baseFade.toFixed(3);
+      if (motion.baseGridOpacity !== baseFadeStr) {
+        motion.baseGridOpacity = baseFadeStr;
+        motion.baseGridGroup.setAttribute('opacity', baseFadeStr);
+      }
     }
 
     updateTravelForms(nowTs);
@@ -726,13 +753,19 @@ function startDotTimeMatrixAiMotion(stage) {
       if (growEase >= 1) waveR = Math.max(waveR, baseR * 0.96);
 
       if (formState === 'fade') {
-        var fadeStart = parseFloat(dot.getAttribute('data-fade-start') || String(TIMEMAT_AI_BG_SETTLE_START_MS));
-        var fadeDur = 560;
+        var fadeStart = parseFloat(dot.getAttribute('data-fade-start') || String(TIMEMAT_AI_REVEAL_AT_MS));
+        var fadeDur = parseFloat(dot.getAttribute('data-fade-dur') || '260');
         var fadeP = Math.min(Math.max((elapsed - fadeStart) / fadeDur, 0), 1);
+        if (fadeP <= 0) {
+          setDotAttr(dot, 'r', String(waveR));
+          setDotAttr(dot, 'fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, dotWhiteBlend));
+          setDotAttr(dot, 'fill-opacity', dotOpacity.toFixed(3));
+          return;
+        }
         var fadeEase = 1 - _timematAiSmoothstep(fadeP);
-        dot.setAttribute('r', String(waveR * (0.55 + fadeEase * 0.45)));
-        dot.setAttribute('fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, dotWhiteBlend * fadeEase));
-        dot.setAttribute('fill-opacity', (dotOpacity * fadeEase).toFixed(3));
+        setDotAttr(dot, 'r', String(waveR * (0.55 + fadeEase * 0.45)));
+        setDotAttr(dot, 'fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, dotWhiteBlend * fadeEase));
+        setDotAttr(dot, 'fill-opacity', (dotOpacity * fadeEase).toFixed(3));
         if (fadeP >= 1) {
           dot.setAttribute('visibility', 'hidden');
           dot.setAttribute('data-form-state', 'done');
@@ -740,9 +773,9 @@ function startDotTimeMatrixAiMotion(stage) {
         return;
       }
 
-      dot.setAttribute('r', String(waveR));
-      dot.setAttribute('fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, dotWhiteBlend));
-      dot.setAttribute('fill-opacity', dotOpacity.toFixed(3));
+      setDotAttr(dot, 'r', String(waveR));
+      setDotAttr(dot, 'fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, dotWhiteBlend));
+      setDotAttr(dot, 'fill-opacity', dotOpacity.toFixed(3));
     });
 
     motion.raf = requestAnimationFrame(function (ts) { waveFrame(startTs, ts); });
