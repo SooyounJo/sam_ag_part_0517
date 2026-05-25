@@ -11,7 +11,7 @@ export default function ThemePage() {
           html, body { background: #C7C7CC !important; overflow: hidden !important; height: 100% !important; }
         `}</style>
       </Head>
-      <span id="active-pill" style={{ display: "none" }}></span>
+      <span id="active-pill" style={{ display: "none" }} suppressHydrationWarning />
 
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: "#1A1B1E" }}>
         {/* Fixed Header area with no background bar, just floating buttons */}
@@ -88,7 +88,7 @@ export default function ThemePage() {
       <Script src="/datasets/normalPreviewCards.js" strategy="beforeInteractive" />
       <Script src="/datasets/dotPreviewCards.js?v=runpanel-frames-4" strategy="beforeInteractive" />
       <Script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" strategy="beforeInteractive" />
-      <Script src="/theme-logic.js?v=3" strategy="lazyOnload" />
+      <Script src="/theme-logic.js?v=14" strategy="afterInteractive" />
     </>
   );
 }

@@ -55,7 +55,18 @@ var TIMEMAT_AI_REVEAL_AT_MS = 4200;
 var TIMEMAT_AI_BLEND_START_MS = 3600;
 var TIMEMAT_AI_WIND_START_MS = 4000;
 var TIMEMAT_AI_WIND_END_MS = 5000;
+var TIMEMAT_AI_SETTLE_MS = 700;
+var TIMEMAT_AI_REVEAL_DURATION_MS = 2000;
+var TIMEMAT_AI_MOTION_END_PAD_MS = 280;
 var TIMEMAT_AI_HIGHLIGHT_START = 0.5;
+var TIMEMAT_AI_GROW_START_MS = 3600;
+var TIMEMAT_AI_GROW_END_MS = 4000;
+var TIMEMAT_AI_BG_SETTLE_START_MS = 4000;
+var TIMEMAT_AI_BG_FADE_MS = 420;
+var TIMEMAT_AI_LETTER_DELAY_MS = 0;
+var TIMEMAT_AI_PROCESS_R_SCALE = 0.55;
+var TIMEMAT_AI_LETTER_TRAVEL_MS = 560;
+var TIMEMAT_AI_IMPL_REV = '20250524-travel-v14';
 var _timematAiMotion = null;
 
 function _timematAiLerpRgb(r1, g1, b1, r2, g2, b2, t) {
@@ -103,6 +114,56 @@ function _timematAiNoise(gx, gy, cols, rows, t) {
   return Math.sin(gx * 0.31 + gy * 0.47 + t * 2.1) * Math.sin(gy * 0.23 - gx * 0.19 + t * 1.6);
 }
 
+function _timematAiRevealRowTiming(timeRowCount, metaRowCount, bgRowCount) {
+  var letterTravelMs = 300;
+  var bgTravelMs = 280;
+  var bgRowGap = 11;
+  var letterRows = Math.max(timeRowCount + metaRowCount, 1);
+  var rowGap = Math.max(42, Math.floor((TIMEMAT_AI_REVEAL_DURATION_MS - letterTravelMs) / Math.max(letterRows - 1, 1)));
+  var metaStartRows = timeRowCount > 0 ? Math.max(1, Math.floor(timeRowCount * 0.38)) : 0;
+  var bgDuration = (bgRowCount > 1 ? (bgRowCount - 1) * bgRowGap : 0) + bgTravelMs;
+  var letterEnd = TIMEMAT_AI_LETTER_DELAY_MS + Math.max(timeRowCount - 1, 0) * rowGap + letterTravelMs;
+  var metaEnd = TIMEMAT_AI_LETTER_DELAY_MS + metaStartRows * rowGap + Math.max(metaRowCount - 1, 0) * rowGap + letterTravelMs;
+  return {
+    letterTravelMs: letterTravelMs,
+    bgTravelMs: bgTravelMs,
+    bgRowGap: bgRowGap,
+    rowGap: rowGap,
+    metaStartRows: metaStartRows,
+    revealEnd: Math.max(bgDuration, letterEnd, metaEnd)
+  };
+}
+
+function _timematAiParseBgTargets(html) {
+  var svgNS = 'http://www.w3.org/2000/svg';
+  var wrap = document.createElementNS(svgNS, 'svg');
+  wrap.innerHTML = html || '';
+  var nodes = wrap.querySelectorAll('.dot-timemat__bgDot');
+  var out = [];
+  for (var i = 0; i < nodes.length; i++) {
+    var d = nodes[i];
+    out.push({
+      cx: parseFloat(d.getAttribute('cx') || '0'),
+      cy: parseFloat(d.getAttribute('cy') || '0'),
+      fill: d.getAttribute('data-bg-fill') || d.getAttribute('fill') || 'rgba(255,255,255,0.16)'
+    });
+  }
+  return out;
+}
+
+function _timematAiParseFill(fill, fallback) {
+  fallback = fallback || { r: 255, g: 117, b: 0, a: 1 };
+  if (!fill) return fallback;
+  var m = String(fill).match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
+  if (!m) return fallback;
+  return {
+    r: parseFloat(m[1]),
+    g: parseFloat(m[2]),
+    b: parseFloat(m[3]),
+    a: m[4] != null ? parseFloat(m[4]) : 1
+  };
+}
+
 function startDotTimeMatrixAiMotion(stage) {
   clearDotTimeMatrixAiMotion();
   if (!stage) return;
@@ -132,6 +193,13 @@ function startDotTimeMatrixAiMotion(stage) {
   var procOffsetX = gridMargin + ((panelW - gridMargin * 2) - procGridW) / 2;
   var procOffsetY = gridMargin + ((panelH - gridMargin * 2) - procGridH) / 2;
   var bgDots = Array.prototype.slice.call(bgGroup.querySelectorAll('.dot-timemat__bgDot'));
+  var bgTargetsFromDom = bgDots.map(function (d) {
+    return {
+      cx: parseFloat(d.getAttribute('cx') || '0'),
+      cy: parseFloat(d.getAttribute('cy') || '0'),
+      fill: d.getAttribute('data-bg-fill') || d.getAttribute('fill') || 'rgba(255,255,255,0.16)'
+    };
+  });
   var timeDots = Array.prototype.slice.call(svg.querySelectorAll('.dot-timemat__dot[data-layer="time"]'));
   var metaDots = Array.prototype.slice.call(svg.querySelectorAll('.dot-timemat__dot[data-layer="meta"]'));
   var baseR = 2.8;
@@ -141,9 +209,8 @@ function startDotTimeMatrixAiMotion(stage) {
   var processDotColor = '#FF7500';
   var processDotOpacityMin = 0.22;
   var processDotOpacityMax = 1;
-  var dotGrowMs = 240;
-  var dotGrowStartR = 0.16;
-  var dotGrowPeakScale = 1.12;
+  var dotFormMs = 380;
+  var dotCullMs = 80;
   var motion = {
     raf: 0,
     timers: [],
@@ -151,19 +218,25 @@ function startDotTimeMatrixAiMotion(stage) {
     stage: stage,
     revealStarted: false,
     bgRestored: false,
-    bgBlendActive: false,
+    motionEndMs: TIMEMAT_AI_REVEAL_AT_MS + TIMEMAT_AI_REVEAL_DURATION_MS + TIMEMAT_AI_MOTION_END_PAD_MS,
+    travelForms: [],
+    cullForms: [],
+    revealPlanReady: false,
+    formedCount: 0,
+    formTotal: 0,
+    revealTiming: null,
+    scheduledTravels: [],
+    bgTargets: bgTargetsFromDom.length ? bgTargetsFromDom : _timematAiParseBgTargets(bgGroup.innerHTML),
     originalBgHtml: bgGroup.innerHTML,
-    waveBaseR: baseR
+    baseGridInstalled: false,
+    baseGridGroup: null,
+    waveBaseR: baseR,
+    processR: baseR
   };
   _timematAiMotion = motion;
 
   function buildProcessBgGrid() {
-    var bgFill = 'rgba(255,255,255,0.16)';
-    var sampleDot = bgGroup.querySelector('.dot-timemat__bgDot');
-    if (sampleDot) {
-      bgFill = sampleDot.getAttribute('data-bg-fill') || sampleDot.getAttribute('fill') || bgFill;
-    }
-    var processR = baseR * (procStep / 8);
+    var processR = baseR * TIMEMAT_AI_PROCESS_R_SCALE;
     var html = '';
     for (var yy = 0; yy < procRows; yy++) {
       for (var xx = 0; xx < procCols; xx++) {
@@ -175,49 +248,85 @@ function startDotTimeMatrixAiMotion(stage) {
         }
         var cx = procOffsetX + xx * procStep;
         var cy = procOffsetY + yy * procStep;
-        html += '<circle class="dot-timemat__bgDot" data-gx="' + xx + '" data-gy="' + yy + '" cx="' + cx + '" cy="' + cy + '" r="' + processR + '" fill="' + bgFill + '" data-bg-fill="' + bgFill + '" />';
+        html += '<circle class="dot-timemat__bgDot" data-gx="' + xx + '" data-gy="' + yy + '" cx="' + cx + '" cy="' + cy + '" r="' + processR + '" fill="' + processDotColor + '" />';
       }
     }
     bgGroup.innerHTML = html;
     cols = procCols;
     rows = procRows;
     motion.waveBaseR = processR;
+    motion.processR = processR;
     return Array.prototype.slice.call(bgGroup.querySelectorAll('.dot-timemat__bgDot'));
   }
 
-  function startBgGridBlend() {
-    if (motion.bgBlendActive) return;
-    motion.bgBlendActive = true;
-    motion.processBgDots = bgDots.slice();
+  function installBaseGridLayer() {
+    if (motion.baseGridInstalled) return;
+    motion.baseGridInstalled = true;
     var svgNS = 'http://www.w3.org/2000/svg';
+    var tmp = document.createElementNS(svgNS, 'g');
+    tmp.innerHTML = motion.originalBgHtml;
     var baseG = document.createElementNS(svgNS, 'g');
-    baseG.setAttribute('class', 'dot-timemat__bgGroupBase');
-    baseG.innerHTML = motion.originalBgHtml;
+    baseG.setAttribute('class', 'dot-timemat__baseGrid');
+    baseG.setAttribute('opacity', '0');
+    while (tmp.firstChild) {
+      baseG.appendChild(tmp.firstChild);
+    }
     bgGroup.insertBefore(baseG, bgGroup.firstChild);
-    motion.baseBgDots = Array.prototype.slice.call(baseG.querySelectorAll('.dot-timemat__bgDot'));
-    motion.baseBgDots.forEach(function (dot) {
-      if (!dot.getAttribute('data-bg-fill')) {
-        dot.setAttribute('data-bg-fill', dot.getAttribute('fill') || 'rgba(255,255,255,0.16)');
-      }
-      dot.setAttribute('fill-opacity', '0');
-    });
+    motion.baseGridGroup = baseG;
   }
 
   function finalizeBgGrid() {
     if (motion.bgRestored) return;
     motion.bgRestored = true;
-    motion.bgBlendActive = false;
-    bgGroup.innerHTML = motion.originalBgHtml;
+    getProcessDotPool().forEach(function (dot) {
+      var state = dot.getAttribute('data-form-state');
+      var kind = dot.getAttribute('data-travel-kind');
+      if (state === 'done' && kind === 'letter') return;
+      dot.setAttribute('visibility', 'hidden');
+      dot.setAttribute('r', '0');
+    });
+    if (!motion.baseGridInstalled) {
+      installBaseGridLayer();
+    }
+    if (motion.baseGridGroup) {
+      motion.baseGridGroup.setAttribute('opacity', '1');
+    } else {
+      bgGroup.innerHTML = motion.originalBgHtml;
+    }
     bgGroup.setAttribute('transform', 'translate(170 90) scale(1) translate(-170 -90)');
-    bgDots = Array.prototype.slice.call(bgGroup.querySelectorAll('.dot-timemat__bgDot'));
-    cols = baseCols;
-    rows = baseRows;
-    motion.waveBaseR = baseR;
-    motion.processBgDots = null;
-    motion.baseBgDots = null;
   }
 
   bgDots = buildProcessBgGrid();
+  if (!motion.bgTargets.length) {
+    motion.bgTargets = buildBaseBgTargets();
+  }
+
+  function buildBaseBgTargets() {
+    var step = 8;
+    var margin = gridMargin;
+    var fill = 'rgba(255,255,255,0.16)';
+    var sample = bgDots[0];
+    if (sample) {
+      fill = sample.getAttribute('data-bg-fill') || sample.getAttribute('fill') || fill;
+    }
+    var out = [];
+    for (var gy = 0; gy < baseRows; gy++) {
+      for (var gx = 0; gx < baseCols; gx++) {
+        if ((gx === 0 && gy === 0) ||
+            (gx === 0 && gy === baseRows - 1) ||
+            (gx === baseCols - 1 && gy === 0) ||
+            (gx === baseCols - 1 && gy === baseRows - 1)) {
+          continue;
+        }
+        out.push({
+          cx: margin + gx * step,
+          cy: margin + gy * step,
+          fill: fill
+        });
+      }
+    }
+    return out;
+  }
 
   timeDots.forEach(function (d) {
     d.classList.remove('is-lit');
@@ -230,7 +339,7 @@ function startDotTimeMatrixAiMotion(stage) {
       d.setAttribute('data-lit-g', '127');
       d.setAttribute('data-lit-b', '36');
     }
-    d.setAttribute('r', String(dotGrowStartR));
+    d.setAttribute('r', '0');
     d.setAttribute('fill-opacity', '0');
   });
   metaDots.forEach(function (d) {
@@ -244,7 +353,7 @@ function startDotTimeMatrixAiMotion(stage) {
       d.setAttribute('data-lit-g', '127');
       d.setAttribute('data-lit-b', '36');
     }
-    d.setAttribute('r', String(dotGrowStartR));
+    d.setAttribute('r', '0');
     d.setAttribute('fill-opacity', '0');
   });
   bgGroup.style.transition = '';
@@ -279,128 +388,319 @@ function startDotTimeMatrixAiMotion(stage) {
     return id;
   }
 
-  function growDotIn(dot) {
-    if (_timematAiMotion !== motion || motion.runId !== 1) return;
-    dot.classList.add('is-lit');
-    var targetR = parseFloat(dot.getAttribute('data-target-r') || String(baseR));
-    var litR = parseInt(dot.getAttribute('data-lit-r') || '255', 10);
-    var litG = parseInt(dot.getAttribute('data-lit-g') || '127', 10);
-    var litB = parseInt(dot.getAttribute('data-lit-b') || '36', 10);
-    var startR = dotGrowStartR;
-    var peakR = targetR * dotGrowPeakScale;
-    var growStart = performance.now();
-
-    function easeOutQuart(t) {
-      return 1 - Math.pow(1 - t, 4);
-    }
-
-    function growFrame(now) {
-      if (_timematAiMotion !== motion || motion.runId !== 1) return;
-      var p = Math.min((now - growStart) / dotGrowMs, 1);
-      var rVal;
-      var opacity;
-      if (p < 0.68) {
-        var pGrow = p / 0.68;
-        var eased = easeOutQuart(pGrow);
-        rVal = startR + (peakR - startR) * eased;
-        opacity = Math.min(eased * 1.15, 1);
-      } else {
-        var pSettle = (p - 0.68) / 0.32;
-        rVal = peakR + (targetR - peakR) * easeOutQuart(pSettle);
-        opacity = 1;
-      }
-      var colorP = easeOutQuart(Math.min(p / 0.82, 1));
-      dot.setAttribute('r', rVal.toFixed(3));
-      dot.setAttribute('fill', _timematAiLerpRgb(255, 255, 255, litR, litG, litB, colorP));
-      dot.setAttribute('fill-opacity', opacity.toFixed(3));
-      if (p < 1) requestAnimationFrame(growFrame);
-      else {
-        dot.setAttribute('r', String(targetR));
-        dot.removeAttribute('fill-opacity');
-      }
-    }
-
-    requestAnimationFrame(growFrame);
+  function getProcessDotPool() {
+    return bgDots;
   }
 
-  function revealRows(dots, startDelayMs, rowStepMs, inRowStepMs) {
-    var rowGroups = groupDotsByRow(dots);
-    var maxAt = startDelayMs;
-    rowGroups.forEach(function (row, rowIndex) {
-      var rowStart = startDelayMs + rowIndex * rowStepMs;
-      row.forEach(function (dot, dotIndex) {
-        var at = rowStart + dotIndex * inRowStepMs;
-        schedule(function () { growDotIn(dot); }, at);
-        if (at > maxAt) maxAt = at;
+  function groupJobsByCy(jobs) {
+    var rowMap = {};
+    jobs.forEach(function (job) {
+      var cy = String(job.targetCy);
+      if (!rowMap[cy]) rowMap[cy] = [];
+      rowMap[cy].push(job);
+    });
+    return Object.keys(rowMap)
+      .sort(function (a, b) { return parseFloat(a) - parseFloat(b); })
+      .map(function (cy) {
+        return rowMap[cy].sort(function (a, b) { return a.targetCx - b.targetCx; });
+      });
+  }
+
+  function takeFarthestProcessDot(targetCx, targetCy, claimed) {
+    var pool = getProcessDotPool();
+    var best = null;
+    var bestDist = -1;
+    for (var i = 0; i < pool.length; i++) {
+      var dot = pool[i];
+      if (claimed.has(dot)) continue;
+      if (dot.getAttribute('data-form-state')) continue;
+      var cx = parseFloat(dot.getAttribute('cx') || '0');
+      var cy = parseFloat(dot.getAttribute('cy') || '0');
+      var dist = Math.hypot(cx - targetCx, cy - targetCy);
+      if (dist > bestDist) {
+        bestDist = dist;
+        best = dot;
+      }
+    }
+    return best;
+  }
+
+  function readProcessDotFill(dot) {
+    var fill = dot.getAttribute('fill') || 'rgb(255,255,255)';
+    var op = parseFloat(dot.getAttribute('fill-opacity') || '1');
+    var parsed = _timematAiParseFill(fill, { r: 255, g: 255, b: 255, a: 1 });
+    parsed.a = op;
+    return parsed;
+  }
+
+  function prepareRevealPlan() {
+    var timeRows = groupDotsByRow(timeDots);
+    var metaRows = groupDotsByRow(metaDots);
+    motion.formedCount = 0;
+    motion.formTotal = timeDots.length + metaDots.length;
+
+    var claimed = new Set();
+    var letterJobCount = 0;
+    function makeLetterJob(litDot) {
+      var targetCx = parseFloat(litDot.getAttribute('data-cx') || litDot.getAttribute('cx') || '0');
+      var targetCy = parseFloat(litDot.getAttribute('data-cy') || litDot.getAttribute('cy') || '0');
+      var litR = parseInt(litDot.getAttribute('data-lit-r') || '255', 10);
+      var litG = parseInt(litDot.getAttribute('data-lit-g') || '127', 10);
+      var litB = parseInt(litDot.getAttribute('data-lit-b') || '36', 10);
+      var procDot = takeFarthestProcessDot(targetCx, targetCy, claimed);
+      if (!procDot) return null;
+      claimed.add(procDot);
+      letterJobCount++;
+      return {
+        kind: 'letter',
+        procDot: procDot,
+        litDot: litDot,
+        targetCx: targetCx,
+        targetCy: targetCy,
+        targetR: parseFloat(litDot.getAttribute('data-target-r') || String(baseR)),
+        targetFill: _timematAiLerpRgb(255, 255, 255, litR, litG, litB, 1),
+        travelMs: TIMEMAT_AI_LETTER_TRAVEL_MS
+      };
+    }
+
+    var timeRowJobs = [];
+    timeRows.forEach(function (row) {
+      var jobs = [];
+      row.forEach(function (litDot) {
+        var job = makeLetterJob(litDot);
+        if (job) jobs.push(job);
+      });
+      if (jobs.length) timeRowJobs.push(jobs);
+    });
+
+    var metaRowJobs = [];
+    metaRows.forEach(function (row) {
+      var jobs = [];
+      row.forEach(function (litDot) {
+        var job = makeLetterJob(litDot);
+        if (job) jobs.push(job);
+      });
+      if (jobs.length) metaRowJobs.push(jobs);
+    });
+
+    var spareDots = [];
+    getProcessDotPool().forEach(function (dot) {
+      if (!claimed.has(dot)) spareDots.push(dot);
+    });
+    spareDots.forEach(function (dot, i) {
+      dot.setAttribute('data-form-state', 'fade');
+      dot.setAttribute('data-fade-start', String(TIMEMAT_AI_BG_SETTLE_START_MS + 220 + i * 5));
+    });
+
+    var timing = _timematAiRevealRowTiming(timeRows.length, metaRows.length, 1);
+    motion.revealTiming = timing;
+    motion.revealPlanReady = true;
+    motion.scheduledTravels = [];
+
+    motion.scheduledTravels.push({ fireAt: TIMEMAT_AI_BG_SETTLE_START_MS, kind: 'base' });
+
+    var letterBase = TIMEMAT_AI_REVEAL_AT_MS + TIMEMAT_AI_LETTER_DELAY_MS;
+    var lastFireAt = letterBase;
+
+    timeRowJobs.forEach(function (jobs, i) {
+      jobs.forEach(function (job, j) {
+        var fireAt = letterBase + i * timing.rowGap + j * 16;
+        if (fireAt > lastFireAt) lastFireAt = fireAt;
+        motion.scheduledTravels.push({ fireAt: fireAt, job: job });
       });
     });
-    return maxAt + dotGrowMs;
+
+    var metaStart = timing.metaStartRows * timing.rowGap;
+    metaRowJobs.forEach(function (jobs, i) {
+      jobs.forEach(function (job, j) {
+        var fireAt = letterBase + metaStart + i * timing.rowGap + j * 16;
+        if (fireAt > lastFireAt) lastFireAt = fireAt;
+        motion.scheduledTravels.push({ fireAt: fireAt, job: job });
+      });
+    });
+
+    motion.motionEndMs = lastFireAt + TIMEMAT_AI_LETTER_TRAVEL_MS + TIMEMAT_AI_MOTION_END_PAD_MS;
+    motion.letterJobCount = letterJobCount;
+    if (typeof console !== 'undefined' && console.info) {
+      console.info('[timemat-ai] reveal plan', { letterJobs: letterJobCount, scheduled: motion.scheduledTravels.length });
+    }
+  }
+
+  function startTravelJob(job, nowTs) {
+    var procDot = job.procDot;
+    if (procDot.getAttribute('data-form-state') === 'travel' || procDot.getAttribute('data-form-state') === 'done') return;
+    var startCx = parseFloat(procDot.getAttribute('cx') || '0');
+    var startCy = parseFloat(procDot.getAttribute('cy') || '0');
+    var startR = parseFloat(procDot.getAttribute('r') || String(motion.processR));
+    var startFill = readProcessDotFill(procDot);
+    if (job.kind === 'letter') {
+      startFill = { r: 255, g: 255, b: 255, a: Math.max(startFill.a, 0.88) };
+    }
+    var targetFillStr = job.targetFill;
+    var targetFill = _timematAiParseFill(targetFillStr, { r: 255, g: 127, b: 36, a: 1 });
+    procDot.setAttribute('data-form-state', 'travel');
+    procDot.removeAttribute('visibility');
+    bgGroup.appendChild(procDot);
+    motion.travelForms.push({
+      kind: job.kind,
+      procDot: procDot,
+      litDot: job.litDot || null,
+      startCx: startCx,
+      startCy: startCy,
+      startR: startR,
+      startFill: startFill,
+      targetFill: targetFill,
+      targetFillStr: targetFillStr,
+      targetCx: job.targetCx,
+      targetCy: job.targetCy,
+      targetR: job.targetR,
+      travelMs: job.travelMs || dotFormMs,
+      startTs: nowTs
+    });
+  }
+
+  function markLitDotFormed(litDot) {
+    if (!litDot || litDot.getAttribute('data-formed') === '1') return;
+    litDot.setAttribute('data-formed', '1');
+    motion.formedCount++;
+  }
+
+  function updateTravelForms(nowTs) {
+    var easeOut = function (t) { return 1 - Math.pow(1 - t, 3); };
+    var nextForms = [];
+    for (var i = 0; i < motion.travelForms.length; i++) {
+      var job = motion.travelForms[i];
+      var p = Math.max(0, Math.min((nowTs - job.startTs) / (job.travelMs || dotFormMs), 1));
+      var eased = easeOut(p);
+      var cx = job.startCx + (job.targetCx - job.startCx) * eased;
+      var cy = job.startCy + (job.targetCy - job.startCy) * eased;
+      var rVal = job.startR + (job.targetR - job.startR) * eased;
+      var sr = job.startFill;
+      var tr = job.targetFill;
+      var fill = _timematAiLerpRgb(sr.r, sr.g, sr.b, tr.r, tr.g, tr.b, eased);
+      var fillOpacity = (sr.a + (tr.a - sr.a) * eased).toFixed(3);
+      job.procDot.setAttribute('cx', cx.toFixed(2));
+      job.procDot.setAttribute('cy', cy.toFixed(2));
+      job.procDot.setAttribute('r', rVal.toFixed(3));
+      job.procDot.setAttribute('fill', fill);
+      job.procDot.setAttribute('fill-opacity', fillOpacity);
+      if (p < 1) {
+        nextForms.push(job);
+        continue;
+      }
+      job.procDot.setAttribute('data-form-state', 'done');
+      job.procDot.setAttribute('data-travel-kind', job.kind);
+      job.procDot.setAttribute('cx', String(job.targetCx));
+      job.procDot.setAttribute('cy', String(job.targetCy));
+      job.procDot.setAttribute('r', String(job.targetR));
+      job.procDot.setAttribute('fill', job.targetFillStr);
+      if (job.kind === 'bg-fade') {
+        job.procDot.setAttribute('fill-opacity', '0');
+        job.procDot.setAttribute('visibility', 'hidden');
+      } else if (job.kind === 'bg') {
+        job.procDot.setAttribute('fill-opacity', String(job.targetFill.a != null ? job.targetFill.a : 0.16));
+      } else {
+        job.procDot.setAttribute('fill-opacity', String(job.targetFill.a != null ? job.targetFill.a : 1));
+      }
+      if (job.kind === 'letter') markLitDotFormed(job.litDot);
+    }
+    motion.travelForms = nextForms;
   }
 
   function waveFrame(startTs, nowTs) {
     if (_timematAiMotion !== motion) return;
     var elapsed = nowTs - startTs;
 
-    if (!motion.bgBlendActive && elapsed >= TIMEMAT_AI_BLEND_START_MS) {
-      startBgGridBlend();
+    if (!motion.revealPlanReady && elapsed >= TIMEMAT_AI_BLEND_START_MS) {
+      prepareRevealPlan();
     }
 
     if (!motion.revealStarted && elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
       motion.revealStarted = true;
-      var rowStep = 96;
-      var inRowStep = 12;
-      revealRows(timeDots, 180, rowStep, inRowStep);
-      revealRows(metaDots, 180 + rowStep + 36, rowStep, inRowStep);
+      if (!motion.revealPlanReady) prepareRevealPlan();
     }
 
-    if (elapsed >= TIMEMAT_AI_WIND_END_MS) {
+    if (elapsed >= motion.motionEndMs && motion.travelForms.length === 0 &&
+        (!motion.scheduledTravels || motion.scheduledTravels.length === 0)) {
       finalizeBgGrid();
       bgGroup.setAttribute('transform', 'translate(170 90) scale(1) translate(-170 -90)');
       return;
     }
 
-    var wind = 1;
-    if (elapsed > TIMEMAT_AI_WIND_START_MS) {
-      wind = 1 - _timematAiSmoothstep(
-        (elapsed - TIMEMAT_AI_WIND_START_MS) / (TIMEMAT_AI_WIND_END_MS - TIMEMAT_AI_WIND_START_MS)
+    if (motion.scheduledTravels && motion.scheduledTravels.length) {
+      var pending = [];
+      for (var si = 0; si < motion.scheduledTravels.length; si++) {
+        var entry = motion.scheduledTravels[si];
+        if (elapsed >= entry.fireAt) {
+          if (entry.kind === 'base') {
+            installBaseGridLayer();
+          } else if (entry.job) {
+            startTravelJob(entry.job, nowTs);
+          }
+        } else {
+          pending.push(entry);
+        }
+      }
+      motion.scheduledTravels = pending;
+    }
+
+    var settleEase = 0;
+    if (motion.revealStarted) {
+      settleEase = _timematAiSmoothstep(
+        Math.min((elapsed - TIMEMAT_AI_REVEAL_AT_MS) / TIMEMAT_AI_SETTLE_MS, 1)
       );
     }
-    var gridBlend = 0;
-    if (motion.bgBlendActive) {
-      var blendElapsed = Math.max(0, elapsed - TIMEMAT_AI_BLEND_START_MS);
-      var blendDuration = TIMEMAT_AI_WIND_END_MS - TIMEMAT_AI_BLEND_START_MS;
-      gridBlend = _timematAiSmoothstep(Math.min(blendElapsed / blendDuration, 1));
+
+    var wind = 1;
+    if (elapsed > TIMEMAT_AI_WIND_START_MS && elapsed < TIMEMAT_AI_REVEAL_AT_MS) {
+      wind = 0.94;
+    } else if (elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
+      var windT = (elapsed - TIMEMAT_AI_REVEAL_AT_MS) / (TIMEMAT_AI_WIND_END_MS - TIMEMAT_AI_REVEAL_AT_MS);
+      wind = Math.max(0.78, 1 - _timematAiSmoothstep(Math.min(windT, 1)) * 0.22);
+    }
+
+    var growEase = 0;
+    if (elapsed >= TIMEMAT_AI_GROW_START_MS) {
+      growEase = _timematAiSmoothstep(
+        Math.min((elapsed - TIMEMAT_AI_GROW_START_MS) / (TIMEMAT_AI_GROW_END_MS - TIMEMAT_AI_GROW_START_MS), 1)
+      );
     }
 
     var t = elapsed / 1000;
     var processProgress = Math.min(elapsed / TIMEMAT_AI_WAVE_MS, 1);
     var whitePhase = 0;
-    if (processProgress > TIMEMAT_AI_HIGHLIGHT_START) {
+    if (motion.revealStarted) {
+      whitePhase = Math.max(0.78, 1 - settleEase * 0.12);
+    } else if (processProgress > TIMEMAT_AI_HIGHLIGHT_START) {
       whitePhase = _timematAiSmoothstep(
         (processProgress - TIMEMAT_AI_HIGHLIGHT_START) / (1 - TIMEMAT_AI_HIGHLIGHT_START)
       );
     }
     var travel = (elapsed / TIMEMAT_AI_WAVE_MS) * Math.PI * 5;
-    var amp = waveAmplitude * wind;
-    var densityScale = 1 - wind * 0.022 * (0.5 + 0.5 * Math.sin(t * 4.1));
+    var amp = waveAmplitude;
+    if (motion.revealStarted) {
+      amp *= Math.max(0.62, 1 - settleEase * 0.22);
+    } else {
+      amp *= wind;
+    }
+    var densityScale = 1 - (motion.revealStarted ? settleEase * 0.006 : wind * 0.022) * (0.5 + 0.5 * Math.sin(t * 4.1));
     bgGroup.setAttribute('transform', 'translate(170 90) scale(' + densityScale + ') translate(-170 -90)');
 
-    if (motion.bgBlendActive && motion.baseBgDots) {
-      motion.baseBgDots.forEach(function (dot) {
-        dot.setAttribute('fill', dot.getAttribute('data-bg-fill') || 'rgba(255,255,255,0.16)');
-        dot.setAttribute('fill-opacity', gridBlend.toFixed(3));
-      });
+    if (motion.baseGridGroup && elapsed >= TIMEMAT_AI_BG_SETTLE_START_MS) {
+      var baseFade = _timematAiSmoothstep(
+        Math.min((elapsed - TIMEMAT_AI_BG_SETTLE_START_MS) / TIMEMAT_AI_BG_FADE_MS, 1)
+      );
+      motion.baseGridGroup.setAttribute('opacity', baseFade.toFixed(3));
     }
 
-    if (motion.bgRestored) {
-      motion.raf = requestAnimationFrame(function (ts) { waveFrame(startTs, ts); });
-      return;
-    }
+    updateTravelForms(nowTs);
 
-    var activeBaseR = motion.waveBaseR;
-    var processDots = motion.bgBlendActive && motion.processBgDots ? motion.processBgDots : bgDots;
-    var processFade = motion.bgBlendActive ? (1 - gridBlend) : 1;
-    processDots.forEach(function (dot) {
+    var processR = motion.processR;
+    var waveDots = bgDots;
+    waveDots.forEach(function (dot) {
+      var formState = dot.getAttribute('data-form-state');
+      if (formState === 'travel' || formState === 'done') return;
+      if (dot.getAttribute('visibility') === 'hidden') return;
       var gx = parseFloat(dot.getAttribute('data-gx') || '0');
       var gy = parseFloat(dot.getAttribute('data-gy') || '0');
       var nx = (gx / Math.max(cols - 1, 1)) * 2 - 1;
@@ -412,21 +712,51 @@ function startDotTimeMatrixAiMotion(stage) {
       var wave = Math.sin(rx * waveFrequency + ry * waveFrequency * 0.65);
       var radialWave = Math.sin(Math.sqrt(Math.min(d2, 1)) * waveFrequency * 3.2 - travel * 1.15);
       var n = _timematAiNoise(gx, gy, cols, rows, t);
-      var processing = 0.5 + wave * amp + radialWave * amp * 0.45 + n * noiseStrength * wind;
+      var processing = 0.5 + wave * amp + radialWave * amp * 0.45 + n * noiseStrength * (motion.revealStarted ? Math.max(0.55, 1 - settleEase * 0.35) : wind);
       if (processing < 0) processing = 0;
       if (processing > 1) processing = 1;
-      var pulseSize = 0.34 + processing * 1.02;
-      var sizeMult = pulseSize * wind + (1 - wind);
-      var colorMix = processing * wind;
-      var dotOpacity = (processDotOpacityMin + colorMix * (processDotOpacityMax - processDotOpacityMin)) * processFade;
-      var dotWhiteBlend = whitePhase * (0.08 + processing * 0.92);
-      var settleR = activeBaseR + (baseR - activeBaseR) * gridBlend;
-      dot.setAttribute('r', String(settleR * sizeMult));
+      var pulseSize = 0.16 + processing * 1.08;
+      var waveKeep = motion.revealStarted ? Math.max(0.78, 1 - settleEase * 0.14) : 1;
+      var sizeMult = pulseSize * wind * waveKeep + (1 - wind * waveKeep);
+      var colorMix = processing * (motion.revealStarted ? Math.max(0.65, 1 - settleEase * 0.2) : wind);
+      var dotOpacity = processDotOpacityMin + colorMix * (processDotOpacityMax - processDotOpacityMin);
+      var dotWhiteBlend = Math.min(1, whitePhase * (0.08 + processing * 0.92));
+      var growR = processR + (baseR - processR) * growEase;
+      var waveR = growR * sizeMult;
+      if (growEase >= 1) waveR = Math.max(waveR, baseR * 0.96);
+
+      if (formState === 'fade') {
+        var fadeStart = parseFloat(dot.getAttribute('data-fade-start') || String(TIMEMAT_AI_BG_SETTLE_START_MS));
+        var fadeDur = 560;
+        var fadeP = Math.min(Math.max((elapsed - fadeStart) / fadeDur, 0), 1);
+        var fadeEase = 1 - _timematAiSmoothstep(fadeP);
+        dot.setAttribute('r', String(waveR * (0.55 + fadeEase * 0.45)));
+        dot.setAttribute('fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, dotWhiteBlend * fadeEase));
+        dot.setAttribute('fill-opacity', (dotOpacity * fadeEase).toFixed(3));
+        if (fadeP >= 1) {
+          dot.setAttribute('visibility', 'hidden');
+          dot.setAttribute('data-form-state', 'done');
+        }
+        return;
+      }
+
+      dot.setAttribute('r', String(waveR));
       dot.setAttribute('fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, dotWhiteBlend));
       dot.setAttribute('fill-opacity', dotOpacity.toFixed(3));
     });
 
     motion.raf = requestAnimationFrame(function (ts) { waveFrame(startTs, ts); });
+  }
+
+  window.__TIMEMAT_AI_REV = TIMEMAT_AI_IMPL_REV;
+  if (typeof console !== 'undefined' && console.info) {
+    console.info('[timemat-ai]', TIMEMAT_AI_IMPL_REV, {
+      bgTargets: motion.bgTargets.length,
+      timeDots: timeDots.length,
+      metaDots: metaDots.length,
+      processDots: bgDots.length,
+      letterJobs: motion.letterJobCount || 0
+    });
   }
 
   motion.raf = requestAnimationFrame(function (ts) { waveFrame(ts, ts); });
@@ -440,7 +770,7 @@ function renderDotTimeMatrixStackInnerHtml(variant) {
   return '' +
     '<div class="dot-timemat-preview-stack" style="display:flex;flex-direction:column;align-items:flex-start;gap:' + DOT_TIMEMAT_DETAIL_GAP + 'px;width:' + DOT_TIMEMAT_W + 'px;">' +
       '<div class="dot-timemat-preview-item" style="flex:0 0 ' + DOT_TIMEMAT_H + 'px;width:' + DOT_TIMEMAT_W + 'px;height:' + DOT_TIMEMAT_H + 'px;">' + tile + '</div>' +
-      '<div class="dot-timemat-preview-item" style="flex:0 0 ' + DOT_TIMEMAT_H + 'px;width:' + DOT_TIMEMAT_W + 'px;height:' + DOT_TIMEMAT_H + 'px;">' + tile + '</div>' +
+      '<div class="dot-timemat-preview-item" data-ai-intro="1" style="flex:0 0 ' + DOT_TIMEMAT_H + 'px;width:' + DOT_TIMEMAT_W + 'px;height:' + DOT_TIMEMAT_H + 'px;">' + tile + '</div>' +
     '</div>';
 }
 
@@ -3078,8 +3408,12 @@ async function boot() {
     // ready yet, retry once on next tick).
     if (typeof window.renderAtomicForRole === 'function') {
       renderPreviewGrid();
+      wirePreviewGridDelegates();
     } else {
-      setTimeout(renderPreviewGrid, 50);
+      setTimeout(function () {
+        renderPreviewGrid();
+        wirePreviewGridDelegates();
+      }, 50);
     }
   } catch (e) {
     console.error('boot failed', e);
@@ -3206,9 +3540,9 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
   });
 })();
 
-(function wirePreviewGridDelegates() {
+function wirePreviewGridDelegates() {
   var grid = $('preview-grid');
-  if (!grid || grid.__delegatesBound) return;
+  if (!grid || grid.__delegatesBound) return false;
   grid.__delegatesBound = true;
   function applyPreviewSelection(idx, opts) {
     console.log('Applying preview selection:', idx);
@@ -3454,7 +3788,7 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
   grid.addEventListener('click', function (e) {
     if (e.detail !== 1) return;
 
-    var bottomTimemat = e.target.closest('.dot-timemat-preview-stack > .dot-timemat-preview-item:last-child');
+    var bottomTimemat = e.target.closest('[data-ai-intro="1"], .dot-timemat-preview-stack > .dot-timemat-preview-item:last-child');
     if (bottomTimemat) {
       var cellAi = e.target.closest('.preview-cell');
       if (cellAi && grid.contains(cellAi)) {
@@ -3545,6 +3879,18 @@ document.getElementById('preview-bg-swatches')?.addEventListener('click', functi
     if (isNaN(idx)) return;
     applyPreviewSelection(idx);
   });
-})();
+  return true;
+}
 
-boot();
+function startThemePageApp() {
+  wirePreviewGridDelegates();
+  boot();
+}
+
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startThemePageApp, { once: true });
+  } else {
+    startThemePageApp();
+  }
+}
