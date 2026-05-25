@@ -51,22 +51,23 @@ var DOT_TIMEMAT_W = 340;
 var DOT_TIMEMAT_H = 180;
 var DOT_TIMEMAT_DETAIL_GAP = 24;
 var TIMEMAT_AI_WAVE_MS = 5000;
-var TIMEMAT_AI_REVEAL_AT_MS = 4200;
-var TIMEMAT_AI_BLEND_START_MS = 3600;
-var TIMEMAT_AI_WIND_START_MS = 4000;
+var TIMEMAT_AI_REVEAL_AT_MS = 3520;
+var TIMEMAT_AI_BLEND_START_MS = 3080;
+var TIMEMAT_AI_WIND_START_MS = 3600;
 var TIMEMAT_AI_WIND_END_MS = 5000;
 var TIMEMAT_AI_SETTLE_MS = 700;
 var TIMEMAT_AI_REVEAL_DURATION_MS = 2000;
 var TIMEMAT_AI_MOTION_END_PAD_MS = 280;
 var TIMEMAT_AI_HIGHLIGHT_START = 0.5;
-var TIMEMAT_AI_GROW_START_MS = 3600;
-var TIMEMAT_AI_GROW_END_MS = 4000;
-var TIMEMAT_AI_BG_SETTLE_START_MS = 4000;
+var TIMEMAT_AI_GROW_START_MS = 3080;
+var TIMEMAT_AI_GROW_END_MS = 3480;
+var TIMEMAT_AI_BG_SETTLE_START_MS = 3600;
 var TIMEMAT_AI_BG_FADE_MS = 420;
 var TIMEMAT_AI_LETTER_DELAY_MS = 0;
 var TIMEMAT_AI_PROCESS_R_SCALE = 0.55;
-var TIMEMAT_AI_LETTER_TRAVEL_MS = 640;
-var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v40';
+var TIMEMAT_AI_LETTER_TRAVEL_MS = 300;
+var TIMEMAT_AI_SYNC_LAND_HANDOFF_MS = 96;
+var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v52';
 var _timematAiMotion = null;
 
 function _timematAiLerpRgb(r1, g1, b1, r2, g2, b2, t) {
@@ -82,6 +83,25 @@ function _timematAiSmoothstep(x) {
   if (x <= 0) return 0;
   if (x >= 1) return 1;
   return x * x * (3 - 2 * x);
+}
+
+function _timematAiSmootherstep(x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  return x * x * x * (x * (x * 6 - 15) + 10);
+}
+
+function _timematAiTravelPathEase(p) {
+  if (p <= 0.56) {
+    var cruise = p / 0.56;
+    return _timematAiSmootherstep(cruise) * 0.50;
+  }
+  var settle = (p - 0.56) / 0.44;
+  return 0.50 + _timematAiSmootherstep(Math.pow(settle, 0.68)) * 0.50;
+}
+
+function _timematAiLandHandoff(p) {
+  return _timematAiSmootherstep(Math.pow(Math.min(Math.max((p - 0.74) / 0.26, 0), 1), 0.72));
 }
 
 function buildLiveTimeMatrixVariant(baseVariant) {
@@ -227,6 +247,8 @@ function startDotTimeMatrixAiMotion(stage) {
     revealTiming: null,
     scheduledTravels: [],
     awaitingWaveSlots: [],
+    peelGhosts: [],
+    syncLandAtMs: null,
     bgTargets: bgTargetsFromDom.length ? bgTargetsFromDom : _timematAiParseBgTargets(bgGroup.innerHTML),
     originalBgHtml: bgGroup.innerHTML,
     baseGridInstalled: false,
@@ -479,9 +501,12 @@ function startDotTimeMatrixAiMotion(stage) {
     var dimR = growR * (0.30 + (1 - heat) * 0.06);
     var coreR = frame.baseR;
     var waveR = dimR + hotCore * (coreR - dimR);
-    var waveKeep = frame.revealStarted ? Math.max(0.82, 1 - settle * 0.12) : 1;
+    var scatterActive = !!frame.letterPhaseActive;
+    var waveKeep = scatterActive ? 1 : (frame.revealStarted ? Math.max(0.82, 1 - settle * 0.12) : 1);
     waveR = waveR * waveKeep + growR * (1 - waveKeep);
-    var colorMix = Math.pow(processing, 0.94) * (frame.revealStarted ? Math.max(0.68, 1 - settle * 0.18) : 1);
+    var colorMix = scatterActive
+      ? Math.pow(processing, 0.94)
+      : (Math.pow(processing, 0.94) * (frame.revealStarted ? Math.max(0.68, 1 - settle * 0.18) : 1));
     var dotOpacity = processDotOpacityMin + colorMix * (processDotOpacityMax - processDotOpacityMin);
     var hiFalloff = falloff * 0.26;
     var hiT = dist / hiFalloff;
@@ -564,8 +589,8 @@ function startDotTimeMatrixAiMotion(stage) {
 
     motion.scheduledTravels.push({ fireAt: TIMEMAT_AI_BG_SETTLE_START_MS, kind: 'base' });
 
-    var letterBase = TIMEMAT_AI_BLEND_START_MS + 240;
-    var burstWindow = 780;
+    var letterBase = TIMEMAT_AI_BLEND_START_MS + 20;
+    var burstWindow = 340;
     var scatterSlots = [];
 
     function procDotWaveAngle(job) {
@@ -607,46 +632,128 @@ function startDotTimeMatrixAiMotion(stage) {
       if (slotReady > lastFireAt) lastFireAt = slotReady;
       motion.awaitingWaveSlots.push({
         readyAfter: slotReady,
-        forceAfter: slotReady + 140,
+        forceAfter: slotReady + 8,
         jobs: slot.jobs
       });
     }
 
+    var spareFadeStartBase = letterBase + Math.round(burstWindow * 0.42);
     var spareFadeEnd = lastFireAt + TIMEMAT_AI_LETTER_TRAVEL_MS * 0.55;
-    var spareFadeSpan = Math.max(spareFadeEnd - letterBase, 1);
+    var spareFadeSpan = Math.max(spareFadeEnd - spareFadeStartBase, 1);
     var spareCount = spareDots.length;
     spareDots.forEach(function (dot, i) {
       dot.setAttribute('data-form-state', 'fade');
       var stagger = spareCount > 1 ? (i / (spareCount - 1)) * spareFadeSpan : 0;
-      dot.setAttribute('data-fade-start', String(Math.round(letterBase + stagger)));
-      dot.setAttribute('data-fade-dur', '260');
+      dot.setAttribute('data-fade-start', String(Math.round(spareFadeStartBase + stagger)));
+      dot.setAttribute('data-fade-dur', '380');
     });
 
-    motion.motionEndMs = lastFireAt + 140 + TIMEMAT_AI_LETTER_TRAVEL_MS + TIMEMAT_AI_MOTION_END_PAD_MS;
+    motion.syncLandAtMs = lastFireAt + TIMEMAT_AI_LETTER_TRAVEL_MS;
+    motion.motionEndMs = motion.syncLandAtMs + TIMEMAT_AI_MOTION_END_PAD_MS;
     motion.letterJobCount = letterJobCount;
     if (typeof console !== 'undefined' && console.info) {
       console.info('[timemat-ai] reveal plan', { letterJobs: letterJobCount, scheduled: motion.scheduledTravels.length });
     }
   }
 
-  function startTravelJob(job, nowTs) {
+  function ensureTravelLayer() {
+    if (motion.travelLayer) return motion.travelLayer;
+    var svgNS = 'http://www.w3.org/2000/svg';
+    var layer = document.createElementNS(svgNS, 'g');
+    layer.setAttribute('class', 'dot-timemat__travelLayer');
+    svg.appendChild(layer);
+    motion.travelLayer = layer;
+    return layer;
+  }
+
+  function spawnPeelGhost(cx, cy, r, fill, opacity, nowTs) {
+    var svgNS = 'http://www.w3.org/2000/svg';
+    var ghost = document.createElementNS(svgNS, 'circle');
+    ghost.setAttribute('class', 'dot-timemat__bgDot dot-timemat__peelGhost');
+    ghost.setAttribute('cx', String(cx));
+    ghost.setAttribute('cy', String(cy));
+    ghost.setAttribute('r', String(r));
+    ghost.setAttribute('fill', fill);
+    ghost.setAttribute('fill-opacity', String(opacity));
+    ghost.setAttribute('pointer-events', 'none');
+    bgGroup.appendChild(ghost);
+    motion.peelGhosts.push({
+      el: ghost,
+      startTs: nowTs,
+      dur: 180,
+      startR: r,
+      startOp: opacity
+    });
+  }
+
+  function updatePeelGhosts(nowTs) {
+    if (!motion.peelGhosts || !motion.peelGhosts.length) return;
+    motion.peelGhosts = motion.peelGhosts.filter(function (ghost) {
+      var gp = Math.min(Math.max((nowTs - ghost.startTs) / ghost.dur, 0), 1);
+      if (gp >= 1) {
+        ghost.el.remove();
+        return false;
+      }
+      var fade = 1 - _timematAiSmootherstep(gp);
+      ghost.el.setAttribute('fill-opacity', (ghost.startOp * fade).toFixed(3));
+      ghost.el.setAttribute('r', String(ghost.startR * (0.88 + fade * 0.12)));
+      return true;
+    });
+  }
+
+  function applyLitDotReveal(litDot, handoff) {
+    if (!litDot || handoff <= 0.001) {
+      if (litDot) {
+        setDotAttr(litDot, 'r', '0');
+        setDotAttr(litDot, 'fill-opacity', '0');
+      }
+      return 0;
+    }
+    var targetR = parseFloat(litDot.getAttribute('data-target-r') || String(baseR));
+    var litR = parseInt(litDot.getAttribute('data-lit-r') || '255', 10);
+    var litG = parseInt(litDot.getAttribute('data-lit-g') || '127', 10);
+    var litB = parseInt(litDot.getAttribute('data-lit-b') || '36', 10);
+    var reveal = _timematAiSmootherstep(handoff);
+    var cx = litDot.getAttribute('data-cx') || litDot.getAttribute('cx') || '0';
+    var cy = litDot.getAttribute('data-cy') || litDot.getAttribute('cy') || '0';
+    setDotAttr(litDot, 'cx', cx);
+    setDotAttr(litDot, 'cy', cy);
+    setDotAttr(litDot, 'r', (targetR * reveal).toFixed(3));
+    setDotAttr(litDot, 'fill', 'rgb(' + litR + ',' + litG + ',' + litB + ')');
+    setDotAttr(litDot, 'fill-opacity', reveal.toFixed(3));
+    if (reveal >= 0.985) litDot.classList.add('is-lit');
+    return reveal;
+  }
+
+  function syncLandHandoff(elapsed) {
+    if (motion.syncLandAtMs == null) return 0;
+    var lead = TIMEMAT_AI_SYNC_LAND_HANDOFF_MS;
+    var t = Math.min(Math.max((elapsed - (motion.syncLandAtMs - lead)) / lead, 0), 1);
+    return _timematAiSmootherstep(Math.pow(t, 0.72));
+  }
+
+  function startTravelJob(job, nowTs, elapsed) {
     var procDot = job.procDot;
     if (procDot.getAttribute('data-form-state') === 'travel' || procDot.getAttribute('data-form-state') === 'done') return;
     var startCx = parseFloat(procDot.getAttribute('cx') || '0');
     var startCy = parseFloat(procDot.getAttribute('cy') || '0');
     var startR = parseFloat(procDot.getAttribute('r') || String(motion.processR));
     var startFill = readProcessDotFill(procDot);
-    if (job.kind === 'letter') {
-      startFill = { r: 255, g: 255, b: 255, a: Math.max(startFill.a, 0.88) };
-    }
     var targetFillStr = job.targetFill;
     var targetFill = _timematAiParseFill(targetFillStr, { r: 255, g: 127, b: 36, a: 1 });
     procDot.setAttribute('data-form-state', 'travel');
     procDot.removeAttribute('visibility');
-    bgGroup.appendChild(procDot);
+    spawnPeelGhost(startCx, startCy, startR, startFill.a >= 0.5
+      ? 'rgb(' + Math.round(startFill.r) + ',' + Math.round(startFill.g) + ',' + Math.round(startFill.b) + ')'
+      : 'rgb(255,255,255)', Math.max(startFill.a, 0.92), nowTs);
+    ensureTravelLayer().appendChild(procDot);
     var panelCx = 170;
     var panelCy = 90;
-    var polarTravel = job.kind === 'letter';
+    var polarTravel = false;
+    var travelMs = job.travelMs || dotFormMs;
+    if (job.kind === 'letter' && motion.syncLandAtMs != null && elapsed != null) {
+      travelMs = Math.max(64, motion.syncLandAtMs - elapsed);
+    }
     motion.travelForms.push({
       kind: job.kind,
       procDot: procDot,
@@ -672,7 +779,7 @@ function startDotTimeMatrixAiMotion(stage) {
       dCx: job.targetCx - startCx,
       dCy: job.targetCy - startCy,
       dR: job.targetR - startR,
-      travelMs: job.travelMs || dotFormMs,
+      travelMs: travelMs,
       startTs: nowTs,
       peelTravel: motion.currentTravel || 0
     });
@@ -680,56 +787,42 @@ function startDotTimeMatrixAiMotion(stage) {
 
   function markLitDotFormed(litDot) {
     if (!litDot || litDot.getAttribute('data-formed') === '1') return;
+    applyLitDotReveal(litDot, 1);
     litDot.setAttribute('data-formed', '1');
+    litDot.classList.add('is-lit');
     motion.formedCount++;
   }
 
-  function updateTravelForms(nowTs, waveCtx) {
-    var easeOut = function (t) { return 1 - Math.pow(1 - t, 3); };
+  function updateTravelForms(nowTs, waveCtx, elapsed) {
     var nextForms = [];
     for (var i = 0; i < motion.travelForms.length; i++) {
       var job = motion.travelForms[i];
       var p = Math.max(0, Math.min((nowTs - job.startTs) / (job.travelMs || dotFormMs), 1));
-      var eased = easeOut(p);
-      var cx;
-      var cy;
-      if (job.polarTravel) {
-        var pathBlend = _timematAiSmoothstep(Math.min(p / 0.34, 1));
-        var rad = job.startRad + (job.endRad - job.startRad) * eased;
-        var ang = lerpTravelAngle(job.startA, job.endA, eased);
-        if (waveCtx && p < 0.26) {
-          ang += Math.sin(job.peelTravel + job.startA * 1.55) * (1 - p / 0.26) * 0.06;
-        }
-        var polarCx = job.panelCx + Math.cos(ang) * rad;
-        var polarCy = job.panelCy + Math.sin(ang) * rad;
-        var linearCx = job.startCx + job.dCx * eased;
-        var linearCy = job.startCy + job.dCy * eased;
-        cx = linearCx + (polarCx - linearCx) * pathBlend;
-        cy = linearCy + (polarCy - linearCy) * pathBlend;
-      } else {
-        cx = job.startCx + job.dCx * eased;
-        cy = job.startCy + job.dCy * eased;
+      var pathEase = _timematAiTravelPathEase(p);
+      var cx = job.startCx + job.dCx * pathEase;
+      var cy = job.startCy + job.dCy * pathEase;
+      var landSnap = 0;
+      var handoff = 0;
+      if (job.kind === 'letter' && motion.syncLandAtMs != null && elapsed != null) {
+        var landLeadMs = 112;
+        landSnap = _timematAiSmootherstep(Math.min(Math.max((elapsed - (motion.syncLandAtMs - landLeadMs)) / landLeadMs, 0), 1));
+        handoff = syncLandHandoff(elapsed);
       }
-      var rVal = job.startR + job.dR * eased;
+      var sizeEase = pathEase + (1 - pathEase) * landSnap * 0.72;
+      var rVal = job.startR + job.dR * sizeEase;
       var sr = job.startFill;
       var tr = job.targetFill;
-      var fill = _timematAiLerpRgb(sr.r, sr.g, sr.b, tr.r, tr.g, tr.b, eased);
-      var fillOpacityNum = sr.a + (tr.a - sr.a) * eased;
-      if (waveCtx && job.kind === 'letter' && p < 1) {
-        var waveMix = Math.max(0, 1 - eased * 0.72);
-        if (waveMix > 0.001) {
-          var waveVis = computeProcessWaveVisual(job.waveGx, job.waveGy, waveCtx);
-          rVal = rVal + (waveVis.waveR - rVal) * waveMix * 0.55;
-          var fillRgb = _timematAiParseFill(fill, { r: sr.r, g: sr.g, b: sr.b, a: 1 });
-          fill = _timematAiLerpRgb(
-            fillRgb.r, fillRgb.g, fillRgb.b,
-            255, 255, 255,
-            waveVis.dotWhiteBlend * waveMix * 0.55
-          );
-          fillOpacityNum = fillOpacityNum + (waveVis.dotOpacity - fillOpacityNum) * waveMix * 0.28;
-        }
+      if (job.kind === 'letter' && handoff <= 0.001) {
+        applyLitDotReveal(job.litDot, 0);
       }
-      var fillOpacity = fillOpacityNum.toFixed(3);
+      var litReveal = job.kind === 'letter' ? applyLitDotReveal(job.litDot, handoff) : 0;
+      var procOpacity = job.kind === 'letter'
+        ? Math.max(0.05, 1 - litReveal * 0.94)
+        : (sr.a + (tr.a - sr.a) * pathEase);
+      var fill = job.kind === 'letter'
+        ? _timematAiLerpRgb(255, 255, 255, tr.r, tr.g, tr.b, handoff * 0.92)
+        : _timematAiLerpRgb(sr.r, sr.g, sr.b, tr.r, tr.g, tr.b, pathEase);
+      var fillOpacity = procOpacity.toFixed(3);
       var cxStr = cx.toFixed(2);
       var cyStr = cy.toFixed(2);
       var rStr = rVal.toFixed(3);
@@ -738,8 +831,23 @@ function startDotTimeMatrixAiMotion(stage) {
       setDotAttr(job.procDot, 'r', rStr);
       setDotAttr(job.procDot, 'fill', fill);
       setDotAttr(job.procDot, 'fill-opacity', fillOpacity);
-      if (p < 1) {
+      var travelDone = p >= 1;
+      if (job.kind === 'letter' && motion.syncLandAtMs != null && elapsed != null) {
+        travelDone = elapsed >= motion.syncLandAtMs;
+      }
+      if (!travelDone) {
         nextForms.push(job);
+        continue;
+      }
+      if (job.kind === 'letter') {
+        setDotAttr(job.procDot, 'cx', String(job.targetCx));
+        setDotAttr(job.procDot, 'cy', String(job.targetCy));
+        setDotAttr(job.procDot, 'r', String(job.targetR));
+        job.procDot.setAttribute('data-form-state', 'done');
+        job.procDot.setAttribute('data-travel-kind', job.kind);
+        job.procDot.setAttribute('visibility', 'hidden');
+        job.procDot.setAttribute('r', '0');
+        markLitDotFormed(job.litDot);
         continue;
       }
       job.procDot.setAttribute('data-form-state', 'done');
@@ -756,7 +864,6 @@ function startDotTimeMatrixAiMotion(stage) {
       } else {
         job.procDot.setAttribute('fill-opacity', String(job.targetFill.a != null ? job.targetFill.a : 1));
       }
-      if (job.kind === 'letter') markLitDotFormed(job.litDot);
     }
     motion.travelForms = nextForms;
   }
@@ -850,7 +957,7 @@ function startDotTimeMatrixAiMotion(stage) {
           if (entry.kind === 'base') {
             installBaseGridLayer();
           } else if (entry.job) {
-            startTravelJob(entry.job, nowTs);
+            startTravelJob(entry.job, nowTs, elapsed);
           }
         } else {
           pending.push(entry);
@@ -871,53 +978,18 @@ function startDotTimeMatrixAiMotion(stage) {
       highlightPhase: highlightPhase,
       waveSettle: waveSettle,
       revealStarted: motion.revealStarted,
+      letterPhaseActive: letterPhaseActive,
       processR: motion.processR,
       baseR: baseR
     };
 
-    if (motion.awaitingWaveSlots && motion.awaitingWaveSlots.length) {
-      var stillAwaiting = [];
-      var peelStarts = 0;
-      for (var wi = 0; wi < motion.awaitingWaveSlots.length; wi++) {
-        var wslot = motion.awaitingWaveSlots[wi];
-        if (elapsed < wslot.readyAfter) {
-          stillAwaiting.push(wslot);
-          continue;
-        }
-        var canPeel = elapsed >= wslot.forceAfter;
-        if (!canPeel) {
-          for (var wj = 0; wj < wslot.jobs.length; wj++) {
-            var wjob = wslot.jobs[wj];
-            var wdot = wjob.procDot;
-            if (wdot.getAttribute('data-form-state') === 'travel' || wdot.getAttribute('data-form-state') === 'done') {
-              canPeel = true;
-              break;
-            }
-            var wgx = parseFloat(wdot.getAttribute('data-gx') || '0');
-            var wgy = parseFloat(wdot.getAttribute('data-gy') || '0');
-            var wvis = computeProcessWaveVisual(wgx, wgy, waveCtx);
-            if (wvis.processing > 0.62 && wvis.dotWhiteBlend > 0.38) {
-              canPeel = true;
-              break;
-            }
-          }
-        }
-        if (canPeel && peelStarts < 5) {
-          for (var wk = 0; wk < wslot.jobs.length; wk++) {
-            startTravelJob(wslot.jobs[wk], nowTs);
-          }
-          peelStarts++;
-        } else {
-          stillAwaiting.push(wslot);
-        }
-      }
-      motion.awaitingWaveSlots = stillAwaiting;
-    }
+    var hotspotCx = 170 + Math.cos(travelRot) * procGridW * 0.50;
+    var hotspotCy = 90 + Math.sin(travelRot) * procGridH * 0.54;
+    var hotspotReach = Math.min(procGridW, procGridH) * 0.52;
 
-    updateTravelForms(nowTs, waveCtx);
+    updatePeelGhosts(nowTs);
 
-    var waveDots = bgDots;
-    waveDots.forEach(function (dot) {
+    bgDots.forEach(function (dot) {
       var formState = dot.getAttribute('data-form-state');
       if (formState === 'travel' || formState === 'done') return;
       if (dot.getAttribute('visibility') === 'hidden') return;
@@ -950,6 +1022,52 @@ function startDotTimeMatrixAiMotion(stage) {
       setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
       setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
     });
+
+    if (motion.awaitingWaveSlots && motion.awaitingWaveSlots.length) {
+      var stillAwaiting = [];
+      var peelCandidates = [];
+      for (var wi = 0; wi < motion.awaitingWaveSlots.length; wi++) {
+        var wslot = motion.awaitingWaveSlots[wi];
+        if (elapsed < wslot.readyAfter) {
+          stillAwaiting.push(wslot);
+          continue;
+        }
+        var slotPending = false;
+        for (var wj = 0; wj < wslot.jobs.length; wj++) {
+          var wjob = wslot.jobs[wj];
+          var wdot = wjob.procDot;
+          var wState = wdot.getAttribute('data-form-state');
+          if (wState === 'travel' || wState === 'done') continue;
+          slotPending = true;
+          var canPeel = elapsed >= wslot.forceAfter;
+          if (!canPeel) {
+            var wgx = parseFloat(wdot.getAttribute('data-gx') || '0');
+            var wgy = parseFloat(wdot.getAttribute('data-gy') || '0');
+            var wvis = computeProcessWaveVisual(wgx, wgy, waveCtx);
+            var wcx = parseFloat(wdot.getAttribute('cx') || '0');
+            var wcy = parseFloat(wdot.getAttribute('cy') || '0');
+            var nearBlob = Math.hypot(wcx - hotspotCx, wcy - hotspotCy) < hotspotReach * 0.92;
+            if (nearBlob && wvis.dotWhiteBlend > 0.12) canPeel = true;
+          }
+          if (canPeel) {
+            var distHot = Math.hypot(
+              parseFloat(wdot.getAttribute('cx') || '0') - hotspotCx,
+              parseFloat(wdot.getAttribute('cy') || '0') - hotspotCy
+            );
+            peelCandidates.push({ job: wjob, dist: distHot });
+          }
+        }
+        if (slotPending) stillAwaiting.push(wslot);
+      }
+      peelCandidates.sort(function (a, b) { return a.dist - b.dist; });
+      var peelBudget = 4;
+      for (var pi = 0; pi < peelCandidates.length && pi < peelBudget; pi++) {
+        startTravelJob(peelCandidates[pi].job, nowTs, elapsed);
+      }
+      motion.awaitingWaveSlots = stillAwaiting;
+    }
+
+    updateTravelForms(nowTs, waveCtx, elapsed);
 
     motion.raf = requestAnimationFrame(function (ts) { waveFrame(startTs, ts); });
   }
