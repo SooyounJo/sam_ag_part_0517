@@ -65,9 +65,13 @@ var TIMEMAT_AI_BG_SETTLE_START_MS = 3600;
 var TIMEMAT_AI_BG_FADE_MS = 420;
 var TIMEMAT_AI_LETTER_DELAY_MS = 0;
 var TIMEMAT_AI_PROCESS_R_SCALE = 0.55;
+var TIMEMAT_AI_PROCESS_ORBIT_SPEED = Math.PI * 0.875;
 var TIMEMAT_AI_LETTER_TRAVEL_MS = 300;
 var TIMEMAT_AI_SYNC_LAND_HANDOFF_MS = 96;
-var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v52';
+var TIMEMAT_AI_GRID_DOT_FILL = '#FFFFFF';
+var TIMEMAT_AI_GRID_SCATTER_PREP_MS = 200;
+var TIMEMAT_AI_GRID_SCATTER_MOVE_MS = 640;
+var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v74';
 var _timematAiMotion = null;
 
 function _timematAiLerpRgb(r1, g1, b1, r2, g2, b2, t) {
@@ -200,8 +204,8 @@ function startDotTimeMatrixAiMotion(stage) {
   var panelW = 340;
   var panelH = 180;
   var gridMargin = 10;
-  var procColDelta = 4;
-  var procRowDelta = 4;
+  var procColDelta = 6;
+  var procRowDelta = 6;
   var procCols = baseCols + procColDelta;
   var procRows = baseRows + procRowDelta;
   var procStep = Math.min(
@@ -294,29 +298,77 @@ function startDotTimeMatrixAiMotion(stage) {
     while (tmp.firstChild) {
       baseG.appendChild(tmp.firstChild);
     }
+    var baseCircles = baseG.querySelectorAll('circle');
+    for (var bi = 0; bi < baseCircles.length; bi++) {
+      baseCircles[bi].setAttribute('fill', TIMEMAT_AI_GRID_DOT_FILL);
+      baseCircles[bi].setAttribute('fill-opacity', '1');
+      baseCircles[bi].setAttribute('data-bg-fill', TIMEMAT_AI_GRID_DOT_FILL);
+    }
     bgGroup.insertBefore(baseG, bgGroup.firstChild);
     motion.baseGridGroup = baseG;
+  }
+
+  function hideTravelLayerDots() {
+    if (!motion.travelLayer) return;
+    var dots = motion.travelLayer.querySelectorAll('circle');
+    for (var i = 0; i < dots.length; i++) {
+      dots[i].setAttribute('visibility', 'hidden');
+      dots[i].setAttribute('fill-opacity', '0');
+      dots[i].setAttribute('r', '0');
+    }
   }
 
   function finalizeBgGrid() {
     if (motion.bgRestored) return;
     motion.bgRestored = true;
+    if (motion.raf) {
+      cancelAnimationFrame(motion.raf);
+      motion.raf = null;
+    }
+    clearPeelGhosts();
+    hideTravelLayerDots();
+
+    var gridDots = motion.gridScatterDotSet;
+    var pairs = motion.gridPairs || [];
+
+    if (pairs.length) {
+      for (var pi = 0; pi < pairs.length; pi++) {
+        var landed = pairs[pi].procDot;
+        landed.removeAttribute('visibility');
+        landed.setAttribute('data-form-state', 'landed');
+        landed.setAttribute('cx', String(pairs[pi].targetCx));
+        landed.setAttribute('cy', String(pairs[pi].targetCy));
+        landed.setAttribute('r', String(pairs[pi].targetR));
+        landed.setAttribute('fill', TIMEMAT_AI_GRID_DOT_FILL);
+        landed.setAttribute('fill-opacity', '1');
+        landed.setAttribute('data-bg-fill', TIMEMAT_AI_GRID_DOT_FILL);
+      }
+    }
+
     getProcessDotPool().forEach(function (dot) {
-      var state = dot.getAttribute('data-form-state');
-      var kind = dot.getAttribute('data-travel-kind');
-      if (state === 'done' && kind === 'letter') return;
+      if (gridDots && gridDots.has(dot)) return;
       dot.setAttribute('visibility', 'hidden');
+      dot.setAttribute('fill-opacity', '0');
       dot.setAttribute('r', '0');
     });
-    if (!motion.baseGridInstalled) {
-      installBaseGridLayer();
-    }
+
     if (motion.baseGridGroup) {
-      motion.baseGridGroup.setAttribute('opacity', '1');
-    } else {
-      bgGroup.innerHTML = motion.originalBgHtml;
+      motion.baseGridGroup.setAttribute('opacity', '0');
     }
-    bgGroup.setAttribute('transform', 'translate(170 90) scale(1) translate(-170 -90)');
+
+    timeDots.forEach(function (d) {
+      d.setAttribute('visibility', 'hidden');
+      d.setAttribute('fill-opacity', '0');
+      d.setAttribute('r', '0');
+      d.classList.remove('is-lit');
+    });
+    metaDots.forEach(function (d) {
+      d.setAttribute('visibility', 'hidden');
+      d.setAttribute('fill-opacity', '0');
+      d.setAttribute('r', '0');
+      d.classList.remove('is-lit');
+    });
+    bgGroup.removeAttribute('transform');
   }
 
   bgDots = buildProcessBgGrid();
@@ -327,7 +379,7 @@ function startDotTimeMatrixAiMotion(stage) {
   function buildBaseBgTargets() {
     var step = 8;
     var margin = gridMargin;
-    var fill = 'rgba(255,255,255,0.16)';
+    var fill = TIMEMAT_AI_GRID_DOT_FILL;
     var sample = bgDots[0];
     if (sample) {
       fill = sample.getAttribute('data-bg-fill') || sample.getAttribute('fill') || fill;
@@ -354,28 +406,14 @@ function startDotTimeMatrixAiMotion(stage) {
   timeDots.forEach(function (d) {
     d.classList.remove('is-lit');
     d.style.transition = '';
-    if (!d.getAttribute('data-target-r')) {
-      d.setAttribute('data-target-r', d.getAttribute('r') || String(baseR));
-    }
-    if (!d.getAttribute('data-lit-r')) {
-      d.setAttribute('data-lit-r', '255');
-      d.setAttribute('data-lit-g', '127');
-      d.setAttribute('data-lit-b', '36');
-    }
+    d.setAttribute('visibility', 'hidden');
     d.setAttribute('r', '0');
     d.setAttribute('fill-opacity', '0');
   });
   metaDots.forEach(function (d) {
     d.classList.remove('is-lit');
     d.style.transition = '';
-    if (!d.getAttribute('data-target-r')) {
-      d.setAttribute('data-target-r', d.getAttribute('r') || String(baseR));
-    }
-    if (!d.getAttribute('data-lit-r')) {
-      d.setAttribute('data-lit-r', '255');
-      d.setAttribute('data-lit-g', '127');
-      d.setAttribute('data-lit-b', '36');
-    }
+    d.setAttribute('visibility', 'hidden');
     d.setAttribute('r', '0');
     d.setAttribute('fill-opacity', '0');
   });
@@ -486,10 +524,10 @@ function startDotTimeMatrixAiMotion(stage) {
     var hx = panelCx + Math.cos(frame.travel) * orbitRx;
     var hy = panelCy + Math.sin(frame.travel) * orbitRy;
     var dist = Math.hypot(dotCx - hx, dotCy - hy);
-    var falloff = Math.min(procGridW, procGridH) * 1.18;
+    var falloff = Math.min(procGridW, procGridH) * 1.36;
     var t = dist / falloff;
-    var heat = 1 / (1 + t * t * 0.78);
-    heat = Math.pow(Math.min(1, Math.max(0, heat)), 1.24);
+    var heat = 1 / (1 + t * t * 0.72);
+    heat = Math.pow(Math.min(1, Math.max(0, heat)), 1.14);
     var grain = Math.sin(gx * 0.31 + gy * 0.47) * Math.sin(gy * 0.23 - gx * 0.19);
     var settle = frame.waveSettle;
     var tone = 0.54 + frame.amp * 0.46;
@@ -518,6 +556,12 @@ function startDotTimeMatrixAiMotion(stage) {
     var baseB = Math.round(8 + 118 * ring);
     var dotFill = _timematAiLerpRgb(255, baseG, baseB, 255, 255, 255, coreWhite);
     var dotWhiteBlend = coreWhite;
+    var scatterWhite = scatterActive ? Math.min(1, Math.max(frame.scatterWhite || 0, coreWhite)) : coreWhite;
+    if (scatterActive) {
+      coreWhite = scatterWhite;
+      dotFill = _timematAiLerpRgb(255, baseG, baseB, 255, 255, 255, coreWhite);
+      dotWhiteBlend = coreWhite;
+    }
     dotOpacity = Math.min(1, dotOpacity + coreWhite * 0.06);
     return {
       waveR: waveR,
@@ -528,132 +572,139 @@ function startDotTimeMatrixAiMotion(stage) {
     };
   }
 
-  function prepareRevealPlan() {
-    var timeRows = groupDotsByRow(timeDots);
-    var metaRows = groupDotsByRow(metaDots);
-    motion.formedCount = 0;
-    motion.formTotal = timeDots.length + metaDots.length;
-
+  function prepareGridOrbitScatter() {
     var claimed = new Set();
-    var letterJobCount = 0;
-    function makeLetterJob(litDot) {
-      var targetCx = parseFloat(litDot.getAttribute('data-cx') || litDot.getAttribute('cx') || '0');
-      var targetCy = parseFloat(litDot.getAttribute('data-cy') || litDot.getAttribute('cy') || '0');
-      var litR = parseInt(litDot.getAttribute('data-lit-r') || '255', 10);
-      var litG = parseInt(litDot.getAttribute('data-lit-g') || '127', 10);
-      var litB = parseInt(litDot.getAttribute('data-lit-b') || '36', 10);
-      var procDot = takeRadialProcessDot(targetCx, targetCy, claimed);
-      if (!procDot) return null;
+    var pairs = [];
+    var panelCx = 170;
+    var panelCy = 90;
+    var targets = motion.bgTargets.length ? motion.bgTargets : buildBaseBgTargets();
+
+    targets.forEach(function (target) {
+      var procDot = takeRadialProcessDot(target.cx, target.cy, claimed);
+      if (!procDot) return;
       claimed.add(procDot);
-      letterJobCount++;
-      return {
-        kind: 'letter',
+      var gx = parseFloat(procDot.getAttribute('data-gx') || '0');
+      var gy = parseFloat(procDot.getAttribute('data-gy') || '0');
+      var orbitCx = procOffsetX + gx * procStep;
+      var orbitCy = procOffsetY + gy * procStep;
+      pairs.push({
         procDot: procDot,
-        litDot: litDot,
-        targetCx: targetCx,
-        targetCy: targetCy,
-        targetR: parseFloat(litDot.getAttribute('data-target-r') || String(baseR)),
-        targetFill: _timematAiLerpRgb(255, 255, 255, litR, litG, litB, 1),
-        travelMs: TIMEMAT_AI_LETTER_TRAVEL_MS
-      };
-    }
-
-    var timeRowJobs = [];
-    timeRows.forEach(function (row) {
-      var jobs = [];
-      row.forEach(function (litDot) {
-        var job = makeLetterJob(litDot);
-        if (job) jobs.push(job);
+        gx: gx,
+        gy: gy,
+        targetCx: target.cx,
+        targetCy: target.cy,
+        targetR: baseR,
+        startA: Math.atan2(orbitCy - panelCy, orbitCx - panelCx),
+        endA: Math.atan2(target.cy - panelCy, target.cx - panelCx),
+        startRad: Math.hypot(orbitCx - panelCx, orbitCy - panelCy),
+        endRad: Math.hypot(target.cx - panelCx, target.cy - panelCy)
       });
-      if (jobs.length) timeRowJobs.push(jobs);
     });
 
-    var metaRowJobs = [];
-    metaRows.forEach(function (row) {
-      var jobs = [];
-      row.forEach(function (litDot) {
-        var job = makeLetterJob(litDot);
-        if (job) jobs.push(job);
-      });
-      if (jobs.length) metaRowJobs.push(jobs);
-    });
-
-    var spareDots = [];
+    motion.gridPairs = pairs;
+    motion.gridScatterDotSet = new Set(pairs.map(function (p) { return p.procDot; }));
+    motion.spareDots = [];
     getProcessDotPool().forEach(function (dot) {
-      if (!claimed.has(dot)) spareDots.push(dot);
+      if (!claimed.has(dot)) motion.spareDots.push(dot);
     });
 
     motion.revealPlanReady = true;
-    motion.scheduledTravels = [];
+    motion.scatterMoveStart = TIMEMAT_AI_BLEND_START_MS;
+    motion.scatterMoveMs = TIMEMAT_AI_GRID_SCATTER_MOVE_MS;
+    motion.scatterPrepStartMs = motion.scatterMoveStart - TIMEMAT_AI_GRID_SCATTER_PREP_MS;
+    motion.syncLandAtMs = motion.scatterMoveStart + motion.scatterMoveMs;
+    motion.motionEndMs = motion.syncLandAtMs + TIMEMAT_AI_MOTION_END_PAD_MS;
+    motion.gridScatterActive = false;
+    motion.scatterLaunchTravelRot = null;
     motion.awaitingWaveSlots = [];
+    motion.scheduledTravels = [];
+    motion.travelForms = [];
+    motion.gridJobCount = pairs.length;
+    var spare = motion.spareDots;
+    for (var si = 0; si < spare.length; si++) {
+      spare[si].setAttribute('visibility', 'hidden');
+      spare[si].setAttribute('fill-opacity', '0');
+      spare[si].setAttribute('data-form-state', 'done');
+    }
+    clearPeelGhosts();
+    if (typeof console !== 'undefined' && console.info) {
+      console.info('[timemat-ai] grid orbit scatter plan', {
+        pairs: pairs.length,
+        launchAtMs: motion.scatterMoveStart,
+        syncLandAtMs: motion.syncLandAtMs
+      });
+    }
+  }
 
-    motion.scheduledTravels.push({ fireAt: TIMEMAT_AI_BG_SETTLE_START_MS, kind: 'base' });
+  function updateGridOrbitScatter(elapsed, waveCtx) {
+    var pairs = motion.gridPairs;
+    if (!pairs || !pairs.length) return false;
+    var moveStart = motion.scatterMoveStart;
+    var moveMs = motion.scatterMoveMs || TIMEMAT_AI_GRID_SCATTER_MOVE_MS;
+    var panelCx = 170;
+    var panelCy = 90;
+    var scatterWhite = waveCtx.scatterWhite || 0;
 
-    var letterBase = TIMEMAT_AI_BLEND_START_MS + 20;
-    var burstWindow = 340;
-    var scatterSlots = [];
+    if (elapsed < moveStart) return false;
 
-    function procDotWaveAngle(job) {
-      var dot = job.procDot;
-      var gx = parseFloat(dot.getAttribute('data-gx') || '0');
-      var gy = parseFloat(dot.getAttribute('data-gy') || '0');
-      var nx = (gx / Math.max(cols - 1, 1)) * 2 - 1;
-      var ny = (gy / Math.max(rows - 1, 1)) * 2 - 1;
-      return Math.atan2(ny, nx);
+    var rawMove = Math.min(Math.max((elapsed - moveStart) / moveMs, 0), 1);
+    var scatterP = rawMove >= 1 ? 1 : _timematAiSmootherstep(rawMove);
+    var complete = rawMove >= 1;
+    var landEase = scatterP;
+
+    if (motion.scatterLaunchTravelRot == null) {
+      motion.scatterLaunchTravelRot = waveCtx.travel;
+      motion.gridScatterActive = true;
     }
 
-    var maxRows = Math.max(timeRowJobs.length, metaRowJobs.length);
-    for (var ri = 0; ri < maxRows; ri++) {
-      var timeJobs = timeRowJobs[ri] || [];
-      var metaJobs = metaRowJobs[ri] || [];
-      var maxCols = Math.max(timeJobs.length, metaJobs.length);
-      for (var ci = 0; ci < maxCols; ci++) {
-        var slotJobs = [];
-        if (timeJobs[ci]) slotJobs.push(timeJobs[ci]);
-        if (metaJobs[ci]) slotJobs.push(metaJobs[ci]);
-        if (!slotJobs.length) continue;
-        var angleSum = 0;
-        for (var si = 0; si < slotJobs.length; si++) angleSum += procDotWaveAngle(slotJobs[si]);
-        scatterSlots.push({
-          jobs: slotJobs,
-          angle: angleSum / slotJobs.length
-        });
+    var spinDelta = waveCtx.travel - motion.scatterLaunchTravelRot;
+    var orbitMix = Math.pow(Math.max(0, 1 - scatterP), 0.72);
+    var landBlend = scatterP <= 0.02 ? 0 : _timematAiSmootherstep(Math.min(scatterP / 0.92, 1));
+
+    for (var i = 0; i < pairs.length; i++) {
+      var pair = pairs[i];
+      var dot = pair.procDot;
+      dot.removeAttribute('visibility');
+      var waveVis = computeProcessWaveVisual(pair.gx, pair.gy, waveCtx);
+      var expandRad = pair.startRad + (pair.endRad - pair.startRad) * landEase;
+      var orbitA = pair.startA + spinDelta * orbitMix;
+      var orbitCx = panelCx + Math.cos(orbitA) * expandRad;
+      var orbitCy = panelCy + Math.sin(orbitA) * expandRad;
+      var cx = orbitCx + (pair.targetCx - orbitCx) * landBlend;
+      var cy = orbitCy + (pair.targetCy - orbitCy) * landBlend;
+
+      if (scatterP >= 0.96) {
+        var snapT = _timematAiSmootherstep(Math.min((scatterP - 0.96) / 0.04, 1));
+        cx += (pair.targetCx - cx) * snapT;
+        cy += (pair.targetCy - cy) * snapT;
+      }
+
+      var waveR = waveVis.waveR;
+      var rVal = waveR + (pair.targetR - waveR) * scatterP;
+      var whiteMix = Math.min(1, Math.max(scatterWhite, waveVis.dotWhiteBlend || 0, scatterP));
+      var waveFill = waveVis.dotFill ||
+        _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend || 0);
+      var fill = _timematAiLerpRgb(255, 117, 0, 255, 255, 255, whiteMix);
+      if (scatterP <= 0.08) fill = waveFill;
+      var waveOp = waveVis.dotOpacity;
+      var op = waveOp + (1 - waveOp) * scatterP;
+
+      setDotAttr(dot, 'cx', cx.toFixed(2));
+      setDotAttr(dot, 'cy', cy.toFixed(2));
+      setDotAttr(dot, 'r', rVal.toFixed(3));
+      setDotAttr(dot, 'fill', fill);
+      setDotAttr(dot, 'fill-opacity', op.toFixed(3));
+
+      if (complete) {
+        setDotAttr(dot, 'cx', String(pair.targetCx));
+        setDotAttr(dot, 'cy', String(pair.targetCy));
+        setDotAttr(dot, 'r', String(pair.targetR));
+        setDotAttr(dot, 'fill', TIMEMAT_AI_GRID_DOT_FILL);
+        setDotAttr(dot, 'fill-opacity', '1');
       }
     }
 
-    scatterSlots.sort(function (a, b) { return a.angle - b.angle; });
-
-    var slotCount = scatterSlots.length;
-    var lastFireAt = letterBase;
-    for (var sli = 0; sli < slotCount; sli++) {
-      var slot = scatterSlots[sli];
-      var phase = (slot.angle + Math.PI) / (Math.PI * 2);
-      var slotReady = Math.round(letterBase + phase * burstWindow);
-      if (slotReady > lastFireAt) lastFireAt = slotReady;
-      motion.awaitingWaveSlots.push({
-        readyAfter: slotReady,
-        forceAfter: slotReady + 8,
-        jobs: slot.jobs
-      });
-    }
-
-    var spareFadeStartBase = letterBase + Math.round(burstWindow * 0.42);
-    var spareFadeEnd = lastFireAt + TIMEMAT_AI_LETTER_TRAVEL_MS * 0.55;
-    var spareFadeSpan = Math.max(spareFadeEnd - spareFadeStartBase, 1);
-    var spareCount = spareDots.length;
-    spareDots.forEach(function (dot, i) {
-      dot.setAttribute('data-form-state', 'fade');
-      var stagger = spareCount > 1 ? (i / (spareCount - 1)) * spareFadeSpan : 0;
-      dot.setAttribute('data-fade-start', String(Math.round(spareFadeStartBase + stagger)));
-      dot.setAttribute('data-fade-dur', '380');
-    });
-
-    motion.syncLandAtMs = lastFireAt + TIMEMAT_AI_LETTER_TRAVEL_MS;
-    motion.motionEndMs = motion.syncLandAtMs + TIMEMAT_AI_MOTION_END_PAD_MS;
-    motion.letterJobCount = letterJobCount;
-    if (typeof console !== 'undefined' && console.info) {
-      console.info('[timemat-ai] reveal plan', { letterJobs: letterJobCount, scheduled: motion.scheduledTravels.length });
-    }
+    return complete;
   }
 
   function ensureTravelLayer() {
@@ -666,39 +717,13 @@ function startDotTimeMatrixAiMotion(stage) {
     return layer;
   }
 
-  function spawnPeelGhost(cx, cy, r, fill, opacity, nowTs) {
-    var svgNS = 'http://www.w3.org/2000/svg';
-    var ghost = document.createElementNS(svgNS, 'circle');
-    ghost.setAttribute('class', 'dot-timemat__bgDot dot-timemat__peelGhost');
-    ghost.setAttribute('cx', String(cx));
-    ghost.setAttribute('cy', String(cy));
-    ghost.setAttribute('r', String(r));
-    ghost.setAttribute('fill', fill);
-    ghost.setAttribute('fill-opacity', String(opacity));
-    ghost.setAttribute('pointer-events', 'none');
-    bgGroup.appendChild(ghost);
-    motion.peelGhosts.push({
-      el: ghost,
-      startTs: nowTs,
-      dur: 180,
-      startR: r,
-      startOp: opacity
-    });
-  }
-
-  function updatePeelGhosts(nowTs) {
-    if (!motion.peelGhosts || !motion.peelGhosts.length) return;
-    motion.peelGhosts = motion.peelGhosts.filter(function (ghost) {
-      var gp = Math.min(Math.max((nowTs - ghost.startTs) / ghost.dur, 0), 1);
-      if (gp >= 1) {
-        ghost.el.remove();
-        return false;
-      }
-      var fade = 1 - _timematAiSmootherstep(gp);
-      ghost.el.setAttribute('fill-opacity', (ghost.startOp * fade).toFixed(3));
-      ghost.el.setAttribute('r', String(ghost.startR * (0.88 + fade * 0.12)));
-      return true;
-    });
+  function clearPeelGhosts() {
+    if (bgGroup) {
+      bgGroup.querySelectorAll('.dot-timemat__peelGhost').forEach(function (ghost) {
+        ghost.remove();
+      });
+    }
+    motion.peelGhosts = [];
   }
 
   function applyLitDotReveal(litDot, handoff) {
@@ -725,11 +750,25 @@ function startDotTimeMatrixAiMotion(stage) {
     return reveal;
   }
 
-  function syncLandHandoff(elapsed) {
-    if (motion.syncLandAtMs == null) return 0;
-    var lead = TIMEMAT_AI_SYNC_LAND_HANDOFF_MS;
-    var t = Math.min(Math.max((elapsed - (motion.syncLandAtMs - lead)) / lead, 0), 1);
-    return _timematAiSmootherstep(Math.pow(t, 0.72));
+  function syncLandHandoff(p) {
+    return _timematAiSmootherstep(Math.max(0, (p - 0.84) / 0.16));
+  }
+
+  function letterTailBlend(value, target, p) {
+    if (p <= 0.968) return value;
+    var t = _timematAiSmootherstep(Math.min((p - 0.968) / 0.032, 1));
+    return value + (target - value) * t;
+  }
+
+  function letterTravelProgress(job, elapsed) {
+    if (motion.syncLandAtMs == null || elapsed == null) return 0;
+    var startElapsed = job.startElapsed;
+    if (job.kind === 'grid' && motion.scatterLaunchElapsed != null) {
+      startElapsed = motion.scatterLaunchElapsed;
+    }
+    if (startElapsed == null) return 0;
+    var span = Math.max(motion.syncLandAtMs - startElapsed, 1);
+    return Math.min(Math.max((elapsed - startElapsed) / span, 0), 1);
   }
 
   function startTravelJob(job, nowTs, elapsed) {
@@ -743,15 +782,15 @@ function startDotTimeMatrixAiMotion(stage) {
     var targetFill = _timematAiParseFill(targetFillStr, { r: 255, g: 127, b: 36, a: 1 });
     procDot.setAttribute('data-form-state', 'travel');
     procDot.removeAttribute('visibility');
-    spawnPeelGhost(startCx, startCy, startR, startFill.a >= 0.5
-      ? 'rgb(' + Math.round(startFill.r) + ',' + Math.round(startFill.g) + ',' + Math.round(startFill.b) + ')'
-      : 'rgb(255,255,255)', Math.max(startFill.a, 0.92), nowTs);
     ensureTravelLayer().appendChild(procDot);
     var panelCx = 170;
     var panelCy = 90;
-    var polarTravel = false;
+    var polarTravel = job.kind === 'grid';
     var travelMs = job.travelMs || dotFormMs;
     if (job.kind === 'letter' && motion.syncLandAtMs != null && elapsed != null) {
+      travelMs = Math.max(64, motion.syncLandAtMs - elapsed);
+    }
+    if (job.kind === 'grid' && motion.syncLandAtMs != null && elapsed != null) {
       travelMs = Math.max(64, motion.syncLandAtMs - elapsed);
     }
     motion.travelForms.push({
@@ -781,6 +820,7 @@ function startDotTimeMatrixAiMotion(stage) {
       dR: job.targetR - startR,
       travelMs: travelMs,
       startTs: nowTs,
+      startElapsed: elapsed != null ? elapsed : 0,
       peelTravel: motion.currentTravel || 0
     });
   }
@@ -798,53 +838,89 @@ function startDotTimeMatrixAiMotion(stage) {
     for (var i = 0; i < motion.travelForms.length; i++) {
       var job = motion.travelForms[i];
       var p = Math.max(0, Math.min((nowTs - job.startTs) / (job.travelMs || dotFormMs), 1));
-      var pathEase = _timematAiTravelPathEase(p);
-      var cx = job.startCx + job.dCx * pathEase;
-      var cy = job.startCy + job.dCy * pathEase;
-      var landSnap = 0;
-      var handoff = 0;
-      if (job.kind === 'letter' && motion.syncLandAtMs != null && elapsed != null) {
-        var landLeadMs = 112;
-        landSnap = _timematAiSmootherstep(Math.min(Math.max((elapsed - (motion.syncLandAtMs - landLeadMs)) / landLeadMs, 0), 1));
-        handoff = syncLandHandoff(elapsed);
+      if (job.kind === 'letter' || job.kind === 'grid') {
+        p = letterTravelProgress(job, elapsed);
       }
-      var sizeEase = pathEase + (1 - pathEase) * landSnap * 0.72;
-      var rVal = job.startR + job.dR * sizeEase;
+      if (p >= 1) p = 1;
+      var pathEase = (job.kind === 'letter' || job.kind === 'grid')
+        ? _timematAiSmootherstep(p)
+        : _timematAiTravelPathEase(p);
+      var cx;
+      var cy;
+      var rVal = job.startR + job.dR * pathEase;
+      if (job.polarTravel) {
+        var arcA = lerpTravelAngle(job.startA, job.endA, pathEase);
+        var arcRad = job.startRad + (job.endRad - job.startRad) * pathEase;
+        if (job.kind === 'grid' && waveCtx && waveCtx.travel != null && job.peelTravel != null) {
+          var driftWeight = Math.pow(Math.max(0, 1 - pathEase), 1.35);
+          if (p > 0.82) {
+            driftWeight *= 1 - _timematAiSmootherstep(Math.min((p - 0.82) / 0.18, 1));
+          }
+          arcA += (waveCtx.travel - job.peelTravel) * driftWeight;
+        }
+        cx = job.panelCx + Math.cos(arcA) * arcRad;
+        cy = job.panelCy + Math.sin(arcA) * arcRad;
+      } else {
+        cx = job.startCx + job.dCx * pathEase;
+        cy = job.startCy + job.dCy * pathEase;
+      }
+      if (job.kind === 'letter' || job.kind === 'grid') {
+        cx = letterTailBlend(cx, job.targetCx, p);
+        cy = letterTailBlend(cy, job.targetCy, p);
+        rVal = letterTailBlend(rVal, job.targetR, p);
+      }
       var sr = job.startFill;
       var tr = job.targetFill;
-      if (job.kind === 'letter' && handoff <= 0.001) {
-        applyLitDotReveal(job.litDot, 0);
-      }
+      var handoff = (job.kind === 'letter' || job.kind === 'grid') ? syncLandHandoff(p) : 0;
       var litReveal = job.kind === 'letter' ? applyLitDotReveal(job.litDot, handoff) : 0;
+      var whiteReveal = job.kind === 'grid'
+        ? Math.max(_timematAiSmootherstep(pathEase), handoff)
+        : 0;
       var procOpacity = job.kind === 'letter'
-        ? Math.max(0.05, 1 - litReveal * 0.94)
-        : (sr.a + (tr.a - sr.a) * pathEase);
-      var fill = job.kind === 'letter'
-        ? _timematAiLerpRgb(255, 255, 255, tr.r, tr.g, tr.b, handoff * 0.92)
+        ? Math.pow(Math.max(0, 1 - litReveal), 2.35)
+        : (job.kind === 'grid'
+          ? (0.52 + whiteReveal * 0.48)
+          : (sr.a + (tr.a - sr.a) * pathEase));
+      var fill = (job.kind === 'letter' || job.kind === 'grid')
+        ? 'rgb(255,255,255)'
         : _timematAiLerpRgb(sr.r, sr.g, sr.b, tr.r, tr.g, tr.b, pathEase);
       var fillOpacity = procOpacity.toFixed(3);
-      var cxStr = cx.toFixed(2);
-      var cyStr = cy.toFixed(2);
-      var rStr = rVal.toFixed(3);
-      setDotAttr(job.procDot, 'cx', cxStr);
-      setDotAttr(job.procDot, 'cy', cyStr);
-      setDotAttr(job.procDot, 'r', rStr);
+      setDotAttr(job.procDot, 'cx', cx.toFixed(2));
+      setDotAttr(job.procDot, 'cy', cy.toFixed(2));
+      setDotAttr(job.procDot, 'r', rVal.toFixed(3));
       setDotAttr(job.procDot, 'fill', fill);
       setDotAttr(job.procDot, 'fill-opacity', fillOpacity);
-      var travelDone = p >= 1;
-      if (job.kind === 'letter' && motion.syncLandAtMs != null && elapsed != null) {
-        travelDone = elapsed >= motion.syncLandAtMs;
-      }
-      if (!travelDone) {
-        nextForms.push(job);
-        continue;
-      }
-      if (job.kind === 'letter') {
+      if (job.kind === 'grid' && p >= 1 && !job.landHold) {
+        setDotAttr(job.procDot, 'fill', TIMEMAT_AI_GRID_DOT_FILL);
+        setDotAttr(job.procDot, 'fill-opacity', '1');
         setDotAttr(job.procDot, 'cx', String(job.targetCx));
         setDotAttr(job.procDot, 'cy', String(job.targetCy));
         setDotAttr(job.procDot, 'r', String(job.targetR));
+        job.procDot.setAttribute('data-form-state', 'landed');
+        job.landHold = true;
+        continue;
+      }
+      if (job.kind === 'letter' && p >= 1 && !job.landHold) {
+        applyLitDotReveal(job.litDot, 1);
+        setDotAttr(job.procDot, 'fill-opacity', '0');
+        setDotAttr(job.procDot, 'cx', String(job.targetCx));
+        setDotAttr(job.procDot, 'cy', String(job.targetCy));
+        setDotAttr(job.procDot, 'r', String(job.targetR));
+        job.landHold = true;
+        nextForms.push(job);
+        continue;
+      }
+      if (p < 1) {
+        nextForms.push(job);
+        continue;
+      }
+      if (job.kind === 'grid') {
+        continue;
+      }
+      if (job.kind === 'letter') {
         job.procDot.setAttribute('data-form-state', 'done');
         job.procDot.setAttribute('data-travel-kind', job.kind);
+        job.procDot.setAttribute('fill-opacity', '0');
         job.procDot.setAttribute('visibility', 'hidden');
         job.procDot.setAttribute('r', '0');
         markLitDotFormed(job.litDot);
@@ -860,7 +936,7 @@ function startDotTimeMatrixAiMotion(stage) {
         job.procDot.setAttribute('fill-opacity', '0');
         job.procDot.setAttribute('visibility', 'hidden');
       } else if (job.kind === 'bg') {
-        job.procDot.setAttribute('fill-opacity', String(job.targetFill.a != null ? job.targetFill.a : 0.16));
+        job.procDot.setAttribute('fill-opacity', String(job.targetFill.a != null ? job.targetFill.a : 1));
       } else {
         job.procDot.setAttribute('fill-opacity', String(job.targetFill.a != null ? job.targetFill.a : 1));
       }
@@ -870,23 +946,30 @@ function startDotTimeMatrixAiMotion(stage) {
 
   function waveFrame(startTs, nowTs) {
     if (_timematAiMotion !== motion) return;
+    if (motion.bgRestored) return;
     var elapsed = nowTs - startTs;
 
-    if (!motion.revealPlanReady && elapsed >= TIMEMAT_AI_BLEND_START_MS) {
-      prepareRevealPlan();
+    if (!motion.revealPlanReady &&
+        elapsed >= TIMEMAT_AI_BLEND_START_MS - TIMEMAT_AI_GRID_SCATTER_PREP_MS) {
+      prepareGridOrbitScatter();
     }
 
     if (!motion.revealStarted && elapsed >= TIMEMAT_AI_REVEAL_AT_MS) {
       motion.revealStarted = true;
-      if (!motion.revealPlanReady) prepareRevealPlan();
+      if (!motion.revealPlanReady) prepareGridOrbitScatter();
     }
 
-    if (elapsed >= motion.motionEndMs && motion.travelForms.length === 0 &&
-        (!motion.scheduledTravels || motion.scheduledTravels.length === 0) &&
-        (!motion.awaitingWaveSlots || motion.awaitingWaveSlots.length === 0)) {
+    if (motion.gridScatterDone) {
       finalizeBgGrid();
-      bgGroup.setAttribute('transform', 'translate(170 90) scale(1) translate(-170 -90)');
       return;
+    }
+
+    if (elapsed >= motion.motionEndMs) {
+      if (motion.travelForms.length === 0 &&
+          (!motion.awaitingWaveSlots || motion.awaitingWaveSlots.length === 0)) {
+        finalizeBgGrid();
+        return;
+      }
     }
 
     var settleEase = 0;
@@ -895,7 +978,15 @@ function startDotTimeMatrixAiMotion(stage) {
         Math.min((elapsed - TIMEMAT_AI_REVEAL_AT_MS) / TIMEMAT_AI_SETTLE_MS, 1)
       );
     }
-    var letterPhaseActive = elapsed >= TIMEMAT_AI_BLEND_START_MS && elapsed < motion.motionEndMs;
+    var scatterPrepStart = motion.scatterPrepStartMs ||
+      (TIMEMAT_AI_BLEND_START_MS - TIMEMAT_AI_GRID_SCATTER_PREP_MS);
+    var letterPhaseActive = elapsed >= scatterPrepStart && elapsed < motion.motionEndMs;
+    var scatterWhite = 0;
+    if (elapsed >= scatterPrepStart) {
+      scatterWhite = _timematAiSmoothstep(
+        Math.min((elapsed - scatterPrepStart) / Math.max(TIMEMAT_AI_GRID_SCATTER_PREP_MS, 1), 1)
+      );
+    }
     var waveSettle = motion.revealStarted && !letterPhaseActive ? settleEase : 0;
 
     var wind = 1;
@@ -928,7 +1019,7 @@ function startDotTimeMatrixAiMotion(stage) {
       whitePhase = Math.max(0.80, 1 - settleEase * 0.10);
       highlightPhase = Math.max(highlightPhase, whitePhase);
     }
-    var travelRot = t * Math.PI;
+    var travelRot = t * TIMEMAT_AI_PROCESS_ORBIT_SPEED;
     motion.currentTravel = travelRot;
     var amp = waveAmplitude * wind;
     if (motion.revealStarted && !letterPhaseActive) {
@@ -936,7 +1027,7 @@ function startDotTimeMatrixAiMotion(stage) {
     }
 
     var baseFade = 0;
-    if (motion.baseGridGroup && elapsed >= TIMEMAT_AI_BG_SETTLE_START_MS) {
+    if (!motion.gridScatterActive && motion.baseGridGroup && elapsed >= TIMEMAT_AI_BG_SETTLE_START_MS) {
       baseFade = _timematAiSmoothstep(
         Math.min((elapsed - TIMEMAT_AI_BG_SETTLE_START_MS) / TIMEMAT_AI_BG_FADE_MS, 1)
       );
@@ -979,92 +1070,56 @@ function startDotTimeMatrixAiMotion(stage) {
       waveSettle: waveSettle,
       revealStarted: motion.revealStarted,
       letterPhaseActive: letterPhaseActive,
+      scatterWhite: scatterWhite,
       processR: motion.processR,
       baseR: baseR
     };
 
-    var hotspotCx = 170 + Math.cos(travelRot) * procGridW * 0.50;
-    var hotspotCy = 90 + Math.sin(travelRot) * procGridH * 0.54;
-    var hotspotReach = Math.min(procGridW, procGridH) * 0.52;
-
-    updatePeelGhosts(nowTs);
+    var gridScatterDots = motion.gridScatterDotSet;
+    var hasGridPairs = motion.gridPairs && motion.gridPairs.length;
+    var scatterRunning = hasGridPairs && elapsed >= motion.scatterMoveStart;
 
     bgDots.forEach(function (dot) {
-      var formState = dot.getAttribute('data-form-state');
-      if (formState === 'travel' || formState === 'done') return;
-      if (dot.getAttribute('visibility') === 'hidden') return;
-      var gx = parseFloat(dot.getAttribute('data-gx') || '0');
-      var gy = parseFloat(dot.getAttribute('data-gy') || '0');
-      var waveVis = computeProcessWaveVisual(gx, gy, waveCtx);
+        if (scatterRunning && gridScatterDots && gridScatterDots.has(dot)) return;
+        var formState = dot.getAttribute('data-form-state');
+        if (formState === 'travel' || formState === 'done' || formState === 'landed' || formState === 'scatter') return;
+        if (dot.getAttribute('visibility') === 'hidden') return;
+        var gx = parseFloat(dot.getAttribute('data-gx') || '0');
+        var gy = parseFloat(dot.getAttribute('data-gy') || '0');
+        var waveVis = computeProcessWaveVisual(gx, gy, waveCtx);
 
-      if (formState === 'fade') {
-        var fadeStart = parseFloat(dot.getAttribute('data-fade-start') || String(TIMEMAT_AI_REVEAL_AT_MS));
-        var fadeDur = parseFloat(dot.getAttribute('data-fade-dur') || '260');
-        var fadeP = Math.min(Math.max((elapsed - fadeStart) / fadeDur, 0), 1);
-        if (fadeP <= 0) {
-          setDotAttr(dot, 'r', String(waveVis.waveR));
-          setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
-          setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
+        if (formState === 'fade') {
+          var fadeStart = parseFloat(dot.getAttribute('data-fade-start') || String(TIMEMAT_AI_REVEAL_AT_MS));
+          var fadeDur = parseFloat(dot.getAttribute('data-fade-dur') || '260');
+          var fadeP = Math.min(Math.max((elapsed - fadeStart) / fadeDur, 0), 1);
+          if (fadeP <= 0) {
+            setDotAttr(dot, 'r', String(waveVis.waveR));
+            setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
+            setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
+            return;
+          }
+          var fadeEase = 1 - _timematAiSmoothstep(fadeP);
+          setDotAttr(dot, 'r', String(waveVis.waveR * (0.55 + fadeEase * 0.45)));
+          setDotAttr(dot, 'fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend * fadeEase));
+          setDotAttr(dot, 'fill-opacity', (waveVis.dotOpacity * fadeEase).toFixed(3));
+          if (fadeP >= 1) {
+            dot.setAttribute('visibility', 'hidden');
+            dot.setAttribute('data-form-state', 'done');
+          }
           return;
         }
-        var fadeEase = 1 - _timematAiSmoothstep(fadeP);
-        setDotAttr(dot, 'r', String(waveVis.waveR * (0.55 + fadeEase * 0.45)));
-        setDotAttr(dot, 'fill', _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend * fadeEase));
-        setDotAttr(dot, 'fill-opacity', (waveVis.dotOpacity * fadeEase).toFixed(3));
-        if (fadeP >= 1) {
-          dot.setAttribute('visibility', 'hidden');
-          dot.setAttribute('data-form-state', 'done');
-        }
+
+        setDotAttr(dot, 'r', String(waveVis.waveR));
+        setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
+        setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
+      });
+
+    if (scatterRunning) {
+      if (updateGridOrbitScatter(elapsed, waveCtx)) {
+        motion.gridScatterDone = true;
+        finalizeBgGrid();
         return;
       }
-
-      setDotAttr(dot, 'r', String(waveVis.waveR));
-      setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
-      setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
-    });
-
-    if (motion.awaitingWaveSlots && motion.awaitingWaveSlots.length) {
-      var stillAwaiting = [];
-      var peelCandidates = [];
-      for (var wi = 0; wi < motion.awaitingWaveSlots.length; wi++) {
-        var wslot = motion.awaitingWaveSlots[wi];
-        if (elapsed < wslot.readyAfter) {
-          stillAwaiting.push(wslot);
-          continue;
-        }
-        var slotPending = false;
-        for (var wj = 0; wj < wslot.jobs.length; wj++) {
-          var wjob = wslot.jobs[wj];
-          var wdot = wjob.procDot;
-          var wState = wdot.getAttribute('data-form-state');
-          if (wState === 'travel' || wState === 'done') continue;
-          slotPending = true;
-          var canPeel = elapsed >= wslot.forceAfter;
-          if (!canPeel) {
-            var wgx = parseFloat(wdot.getAttribute('data-gx') || '0');
-            var wgy = parseFloat(wdot.getAttribute('data-gy') || '0');
-            var wvis = computeProcessWaveVisual(wgx, wgy, waveCtx);
-            var wcx = parseFloat(wdot.getAttribute('cx') || '0');
-            var wcy = parseFloat(wdot.getAttribute('cy') || '0');
-            var nearBlob = Math.hypot(wcx - hotspotCx, wcy - hotspotCy) < hotspotReach * 0.92;
-            if (nearBlob && wvis.dotWhiteBlend > 0.12) canPeel = true;
-          }
-          if (canPeel) {
-            var distHot = Math.hypot(
-              parseFloat(wdot.getAttribute('cx') || '0') - hotspotCx,
-              parseFloat(wdot.getAttribute('cy') || '0') - hotspotCy
-            );
-            peelCandidates.push({ job: wjob, dist: distHot });
-          }
-        }
-        if (slotPending) stillAwaiting.push(wslot);
-      }
-      peelCandidates.sort(function (a, b) { return a.dist - b.dist; });
-      var peelBudget = 4;
-      for (var pi = 0; pi < peelCandidates.length && pi < peelBudget; pi++) {
-        startTravelJob(peelCandidates[pi].job, nowTs, elapsed);
-      }
-      motion.awaitingWaveSlots = stillAwaiting;
     }
 
     updateTravelForms(nowTs, waveCtx, elapsed);
@@ -1079,7 +1134,8 @@ function startDotTimeMatrixAiMotion(stage) {
       timeDots: timeDots.length,
       metaDots: metaDots.length,
       processDots: bgDots.length,
-      letterJobs: motion.letterJobCount || 0
+      gridJobs: motion.gridJobCount || 0,
+      gridOrbit: !!motion.gridScatterActive
     });
   }
 

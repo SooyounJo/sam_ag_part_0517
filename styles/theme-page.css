@@ -2846,9 +2846,15 @@
   }
   .detail-stage.is-timemat-ai-intro .dot-timemat__dot {
     animation: none;
+    visibility: hidden !important;
+    fill-opacity: 0 !important;
   }
   .detail-stage.is-timemat-ai-intro .dot-timemat__dot.is-lit {
     animation: none;
+  }
+  .detail-stage.is-timemat-ai-intro .dot-timemat__baseGrid circle {
+    fill: #ffffff;
+    fill-opacity: 1;
   }
 
   /* Schedule cards (dot) */
