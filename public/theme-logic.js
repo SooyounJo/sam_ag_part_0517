@@ -71,7 +71,7 @@ var TIMEMAT_AI_SYNC_LAND_HANDOFF_MS = 96;
 var TIMEMAT_AI_GRID_DOT_FILL = '#FFFFFF';
 var TIMEMAT_AI_GRID_SCATTER_PREP_MS = 200;
 var TIMEMAT_AI_GRID_SCATTER_MOVE_MS = 640;
-var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v74';
+var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v81';
 var _timematAiMotion = null;
 
 function _timematAiLerpRgb(r1, g1, b1, r2, g2, b2, t) {
@@ -318,6 +318,15 @@ function startDotTimeMatrixAiMotion(stage) {
     }
   }
 
+  function buildFinalWhiteGridHtml() {
+    var targets = motion.bgTargets.length ? motion.bgTargets : buildBaseBgTargets();
+    var html = '';
+    for (var i = 0; i < targets.length; i++) {
+      html += '<circle class="dot-timemat__bgDot" cx="' + targets[i].cx + '" cy="' + targets[i].cy + '" r="' + baseR + '" fill="' + TIMEMAT_AI_GRID_DOT_FILL + '" fill-opacity="1" data-bg-fill="' + TIMEMAT_AI_GRID_DOT_FILL + '" />';
+    }
+    return html;
+  }
+
   function finalizeBgGrid() {
     if (motion.bgRestored) return;
     motion.bgRestored = true;
@@ -327,34 +336,9 @@ function startDotTimeMatrixAiMotion(stage) {
     }
     clearPeelGhosts();
     hideTravelLayerDots();
-
-    var gridDots = motion.gridScatterDotSet;
-    var pairs = motion.gridPairs || [];
-
-    if (pairs.length) {
-      for (var pi = 0; pi < pairs.length; pi++) {
-        var landed = pairs[pi].procDot;
-        landed.removeAttribute('visibility');
-        landed.setAttribute('data-form-state', 'landed');
-        landed.setAttribute('cx', String(pairs[pi].targetCx));
-        landed.setAttribute('cy', String(pairs[pi].targetCy));
-        landed.setAttribute('r', String(pairs[pi].targetR));
-        landed.setAttribute('fill', TIMEMAT_AI_GRID_DOT_FILL);
-        landed.setAttribute('fill-opacity', '1');
-        landed.setAttribute('data-bg-fill', TIMEMAT_AI_GRID_DOT_FILL);
-      }
-    }
-
-    getProcessDotPool().forEach(function (dot) {
-      if (gridDots && gridDots.has(dot)) return;
-      dot.setAttribute('visibility', 'hidden');
-      dot.setAttribute('fill-opacity', '0');
-      dot.setAttribute('r', '0');
-    });
-
-    if (motion.baseGridGroup) {
-      motion.baseGridGroup.setAttribute('opacity', '0');
-    }
+    bgGroup.removeAttribute('transform');
+    bgGroup.style.transition = '';
+    bgGroup.innerHTML = buildFinalWhiteGridHtml();
 
     timeDots.forEach(function (d) {
       d.setAttribute('visibility', 'hidden');
@@ -643,13 +627,12 @@ function startDotTimeMatrixAiMotion(stage) {
     var moveMs = motion.scatterMoveMs || TIMEMAT_AI_GRID_SCATTER_MOVE_MS;
     var panelCx = 170;
     var panelCy = 90;
-    var scatterWhite = waveCtx.scatterWhite || 0;
 
     if (elapsed < moveStart) return false;
 
     var rawMove = Math.min(Math.max((elapsed - moveStart) / moveMs, 0), 1);
     var scatterP = rawMove >= 1 ? 1 : _timematAiSmootherstep(rawMove);
-    var complete = rawMove >= 1;
+    var complete = rawMove >= 0.88;
     var landEase = scatterP;
 
     if (motion.scatterLaunchTravelRot == null) {
@@ -673,19 +656,9 @@ function startDotTimeMatrixAiMotion(stage) {
       var cx = orbitCx + (pair.targetCx - orbitCx) * landBlend;
       var cy = orbitCy + (pair.targetCy - orbitCy) * landBlend;
 
-      if (scatterP >= 0.96) {
-        var snapT = _timematAiSmootherstep(Math.min((scatterP - 0.96) / 0.04, 1));
-        cx += (pair.targetCx - cx) * snapT;
-        cy += (pair.targetCy - cy) * snapT;
-      }
-
       var waveR = waveVis.waveR;
       var rVal = waveR + (pair.targetR - waveR) * scatterP;
-      var whiteMix = Math.min(1, Math.max(scatterWhite, waveVis.dotWhiteBlend || 0, scatterP));
-      var waveFill = waveVis.dotFill ||
-        _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend || 0);
-      var fill = _timematAiLerpRgb(255, 117, 0, 255, 255, 255, whiteMix);
-      if (scatterP <= 0.08) fill = waveFill;
+      var fill = processDotColor;
       var waveOp = waveVis.dotOpacity;
       var op = waveOp + (1 - waveOp) * scatterP;
 
@@ -695,13 +668,6 @@ function startDotTimeMatrixAiMotion(stage) {
       setDotAttr(dot, 'fill', fill);
       setDotAttr(dot, 'fill-opacity', op.toFixed(3));
 
-      if (complete) {
-        setDotAttr(dot, 'cx', String(pair.targetCx));
-        setDotAttr(dot, 'cy', String(pair.targetCy));
-        setDotAttr(dot, 'r', String(pair.targetR));
-        setDotAttr(dot, 'fill', TIMEMAT_AI_GRID_DOT_FILL);
-        setDotAttr(dot, 'fill-opacity', '1');
-      }
     }
 
     return complete;
