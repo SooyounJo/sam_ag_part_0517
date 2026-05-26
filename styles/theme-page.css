@@ -633,6 +633,190 @@
     background: rgba(255, 255, 255, 0.92);
   }
 
+  /* test3 (health home): intro runner exit + home widget bounce-in */
+  @keyframes test3IntroRunExit {
+    0% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    35% {
+      opacity: 0.92;
+      transform: scale(0.97) translateY(-1px);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(0.86) translateY(-4px);
+    }
+  }
+  #canvas[data-test-scope="test3"] #test3-intro-run.test3-intro-run-exit {
+    animation: test3IntroRunExit 0.36s cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
+    pointer-events: none;
+    transform-origin: center;
+    will-change: transform, opacity;
+  }
+
+  @keyframes test3HomeWidgetEnterDown {
+    0% {
+      opacity: 0;
+      transform: translateY(14px) scale(0.985);
+    }
+    48% {
+      opacity: 0.82;
+      transform: translateY(5px) scale(0.995);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  #canvas[data-test-scope="test3"][data-test3-home-enter="1"] .canvas-item {
+    animation: none !important;
+  }
+  /* test3: pre-render home widgets invisible before we flip to enter on next frame */
+  #canvas[data-test-scope="test3"][data-test3-home-prep="1"] #test3-goal,
+  #canvas[data-test-scope="test3"][data-test3-home-prep="1"] #test3-weather,
+  #canvas[data-test-scope="test3"][data-test3-home-prep="1"] #test3-steps {
+    opacity: 0 !important;
+    transform: translateY(14px) scale(0.985) !important;
+    animation: none !important;
+    will-change: transform, opacity;
+  }
+  #canvas[data-test-scope="test3"][data-test3-home-enter="1"] #test3-goal,
+  #canvas[data-test-scope="test3"][data-test3-home-enter="1"] #test3-weather,
+  #canvas[data-test-scope="test3"][data-test3-home-enter="1"] #test3-steps {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+    animation: test3HomeWidgetEnterDown 0.52s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+    will-change: transform, opacity;
+  }
+  #canvas[data-test-scope="test3"][data-test3-home-enter="1"] #test3-goal {
+    animation-delay: 0.04s !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-home-enter="1"] #test3-weather {
+    animation-delay: 0.11s !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-home-enter="1"] #test3-steps {
+    animation-delay: 0.18s !important;
+  }
+
+  /* test3: home 진입 후 music 등장 + 주변 컴포넌트 자리 이동 */
+  @keyframes test3MusicCardIn {
+    0% { opacity: 0; transform: translateY(18px) scale(0.965); filter: blur(4px); }
+    58% { opacity: 0.72; transform: translateY(6px) scale(0.992); filter: blur(1px); }
+    100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  }
+  @keyframes test3WeatherShift {
+    0% { transform: translate(0, 0); }
+    34% { transform: translate(172px, 0); }
+    67% { transform: translate(172px, 86px); }
+    100% { transform: translate(172px, 172px); }
+  }
+  @keyframes test3StepsShift {
+    0% { transform: translate(0, 0); }
+    34% { transform: translate(0, 86px); }
+    67% { transform: translate(0, 172px); }
+    100% { transform: translate(-172px, 172px); }
+  }
+  @keyframes test3MusicRevealCard {
+    0%, 14% {
+      width: 168px;
+      clip-path: inset(0 0 0 0 round 32px);
+    }
+    34%, 100% {
+      width: 340px;
+      clip-path: inset(0 0 0 0 round 32px);
+    }
+  }
+  @keyframes test3MusicCompactOut {
+    0%, 18% {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    34%, 100% {
+      opacity: 0;
+      transform: translateX(-8px) scale(0.98);
+    }
+  }
+  @keyframes test3MusicIconIn {
+    0%, 28% {
+      opacity: 0;
+      transform: translateX(8px) scale(0.985);
+    }
+    44%, 100% {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+
+  #canvas[data-test-scope="test3"] #test3-music {
+    opacity: 0 !important;
+    visibility: hidden;
+    transform: translateY(18px) scale(0.965);
+    pointer-events: none !important;
+    z-index: 3;
+  }
+  #canvas[data-test-scope="test3"]:not([data-test3-music-shift="1"]) #test3-music {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    animation: none !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music {
+    opacity: 1 !important;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+    animation: test3MusicCardIn 0.74s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1 {
+    width: 168px;
+    clip-path: inset(0 0 0 0 round 32px);
+    animation: test3MusicRevealCard 12s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__compact {
+    width: 168px;
+    animation: test3MusicCompactOut 12s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__expanded {
+    animation: dotMusicExpandedIn 12s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__icon {
+    animation: test3MusicIconIn 12s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__player::before {
+    animation:
+      dotMusicSecondBgIn 12s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+      dotMusicSecondBgFlow 9s linear 5s forwards !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__player::after {
+    animation:
+      dotMusicSecondTextIn 12s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+      dotMusicSecondTitleGradient 2.2s linear 6.6s infinite !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__singer-name {
+    animation:
+      dotMusicSingerGradient 2.2s linear 3s infinite,
+      dotMusicFirstTextOut 12s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__iconBg {
+    animation: dotMusicFirstIconBgToSecond 12s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__musicIcon {
+    animation: dotMusicFirstIconToSecond 12s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-music .dot-music1__noteSvg circle {
+    animation:
+      dotMusicIconDotSweep 1.8s steps(1, end) 3s 1 forwards,
+      dotMusicIconDotSweep 1.8s steps(1, end) 6.4s infinite;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-weather {
+    animation: test3WeatherShift 0.98s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+    will-change: transform;
+  }
+  #canvas[data-test-scope="test3"][data-test3-music-shift="1"] #test3-steps {
+    animation: test3StepsShift 0.98s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+    will-change: transform;
+  }
+
   /* Persona1 time-matrix: periodic running overlay (orange dots) */
   #p1-timemat { overflow: visible; }
   #p1-timemat .p1-timemat-run-overlay {

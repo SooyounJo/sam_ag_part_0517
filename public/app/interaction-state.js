@@ -274,6 +274,16 @@
       // chip, switch, radio onclicks) without selecting/deselecting.
       if (_isInteractEvent(e)) return;
 
+      // MLP test3 (health home): intro runner pill → switch to home widgets (front-only)
+      try {
+        var actionEl = e.target && e.target.closest ? e.target.closest('[data-mlp-action="mlp-intro-to-home"]') : null;
+        if (actionEl && typeof window.__mlpTest3GoHome === 'function' && window.__mlpTest3GoHome()) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      } catch (_) {}
+
       var id = hitTestNodeIdFromPoint(e.clientX, e.clientY);
       if (!id) {
         // Clicked empty canvas → deselect

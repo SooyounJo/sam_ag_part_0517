@@ -30,7 +30,7 @@ function TestScripts() {
       <Script src="/app/atomics.js?v=4" strategy="beforeInteractive" />
       <Script src="/app/design-doc.js?v=2" strategy="beforeInteractive" />
       <Script src="/app/interaction-state.js?v=2" strategy="beforeInteractive" />
-      <Script src="/app/surface-layout.js?v=mlp-test-split-1" strategy="beforeInteractive" />
+      <Script src="/app/surface-layout.js?v=mlp-test3-music-1" strategy="beforeInteractive" />
       <Script src="/app/settings.js?v=2" strategy="beforeInteractive" />
       <Script src="/app/canvas.js?v=2" strategy="beforeInteractive" />
       <Script src="/app/rules-renderer.js?v=2" strategy="beforeInteractive" />
@@ -60,7 +60,12 @@ export default function MlpTestPage({
     if (typeof window === "undefined") return undefined;
 
     document.body.dataset.mlpTest = testId;
-    window.__mlpTestConfig = { id: testId, surfaceType: initialSurfaceType };
+    window.__mlpTestConfig = {
+      id: testId,
+      surfaceType: initialSurfaceType,
+      // test3(헬스 홈)만: 인트로(러닝 pill) → 클릭 시 홈 위젯으로 전환
+      homeStage: testId === "test3" && initialSurfaceType === "tab-root" ? "intro" : undefined,
+    };
     delete window.__p1_custom_widgets;
 
     const handleResize = () => {
