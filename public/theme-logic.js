@@ -70,8 +70,8 @@ var TIMEMAT_AI_LETTER_TRAVEL_MS = 300;
 var TIMEMAT_AI_SYNC_LAND_HANDOFF_MS = 96;
 var TIMEMAT_AI_GRID_DOT_FILL = '#FFFFFF';
 var TIMEMAT_AI_GRID_SCATTER_PREP_MS = 200;
-var TIMEMAT_AI_GRID_SCATTER_MOVE_MS = 640;
-var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v81';
+var TIMEMAT_AI_GRID_SCATTER_MOVE_MS = 840;
+var TIMEMAT_AI_IMPL_REV = '20250521-orbitgradient-v135';
 var _timematAiMotion = null;
 
 function _timematAiLerpRgb(r1, g1, b1, r2, g2, b2, t) {
@@ -547,12 +547,17 @@ function startDotTimeMatrixAiMotion(stage) {
       dotWhiteBlend = coreWhite;
     }
     dotOpacity = Math.min(1, dotOpacity + coreWhite * 0.06);
+    var tangentX = -Math.sin(frame.travel);
+    var tangentY = Math.cos(frame.travel);
+    var drift = processing * 2.2;
     return {
       waveR: waveR,
       dotOpacity: dotOpacity,
       dotWhiteBlend: dotWhiteBlend,
       dotFill: dotFill,
-      processing: processing
+      processing: processing,
+      moveX: tangentX * drift,
+      moveY: tangentY * drift
     };
   }
 
@@ -604,12 +609,6 @@ function startDotTimeMatrixAiMotion(stage) {
     motion.scheduledTravels = [];
     motion.travelForms = [];
     motion.gridJobCount = pairs.length;
-    var spare = motion.spareDots;
-    for (var si = 0; si < spare.length; si++) {
-      spare[si].setAttribute('visibility', 'hidden');
-      spare[si].setAttribute('fill-opacity', '0');
-      spare[si].setAttribute('data-form-state', 'done');
-    }
     clearPeelGhosts();
     if (typeof console !== 'undefined' && console.info) {
       console.info('[timemat-ai] grid orbit scatter plan', {
@@ -631,36 +630,96 @@ function startDotTimeMatrixAiMotion(stage) {
     if (elapsed < moveStart) return false;
 
     var rawMove = Math.min(Math.max((elapsed - moveStart) / moveMs, 0), 1);
-    var scatterP = rawMove >= 1 ? 1 : _timematAiSmootherstep(rawMove);
-    var complete = rawMove >= 0.88;
-    var landEase = scatterP;
+    var complete = rawMove >= 0.96;
 
     if (motion.scatterLaunchTravelRot == null) {
       motion.scatterLaunchTravelRot = waveCtx.travel;
+      motion.scatterLaunchElapsed = elapsed;
       motion.gridScatterActive = true;
+      var liveDots = getProcessDotPool().slice().sort(function (a, b) {
+        var agx = parseFloat(a.getAttribute('data-gx') || '0');
+        var agy = parseFloat(a.getAttribute('data-gy') || '0');
+        var bgx = parseFloat(b.getAttribute('data-gx') || '0');
+        var bgy = parseFloat(b.getAttribute('data-gy') || '0');
+        return computeProcessWaveVisual(bgx, bgy, waveCtx).processing -
+          computeProcessWaveVisual(agx, agy, waveCtx).processing;
+      });
+      var reassigned = new Set();
+      for (var pi = 0; pi < pairs.length && pi < liveDots.length; pi++) {
+        var pairForDot = pairs[pi];
+        var liveDot = liveDots[pi];
+        var liveGx = parseFloat(liveDot.getAttribute('data-gx') || '0');
+        var liveGy = parseFloat(liveDot.getAttribute('data-gy') || '0');
+        pairForDot.procDot = liveDot;
+        pairForDot.gx = liveGx;
+        pairForDot.gy = liveGy;
+        pairForDot.startCx = null;
+        pairForDot.startCy = null;
+        reassigned.add(liveDot);
+      }
+      var minTargetX = Infinity;
+      var maxTargetX = -Infinity;
+      pairs.forEach(function (pair) {
+        minTargetX = Math.min(minTargetX, pair.targetCx);
+        maxTargetX = Math.max(maxTargetX, pair.targetCx);
+      });
+      var targetSpanX = Math.max(maxTargetX - minTargetX, 1);
+      pairs.forEach(function (pair) {
+        var sweepT = (pair.targetCx - minTargetX) / targetSpanX;
+        var rightToLeft = 1 - sweepT;
+        pair.gridDelay = rightToLeft * 0.34;
+      });
+      motion.gridScatterDotSet = reassigned;
+      getProcessDotPool().forEach(function (dot) {
+        if (reassigned.has(dot)) return;
+        dot.removeAttribute('visibility');
+        dot.setAttribute('data-form-state', 'fade');
+        dot.setAttribute('data-fade-start', String(elapsed));
+        dot.setAttribute('data-fade-dur', '180');
+      });
     }
-
-    var spinDelta = waveCtx.travel - motion.scatterLaunchTravelRot;
-    var orbitMix = Math.pow(Math.max(0, 1 - scatterP), 0.72);
-    var landBlend = scatterP <= 0.02 ? 0 : _timematAiSmootherstep(Math.min(scatterP / 0.92, 1));
-
     for (var i = 0; i < pairs.length; i++) {
       var pair = pairs[i];
       var dot = pair.procDot;
       dot.removeAttribute('visibility');
       var waveVis = computeProcessWaveVisual(pair.gx, pair.gy, waveCtx);
-      var expandRad = pair.startRad + (pair.endRad - pair.startRad) * landEase;
-      var orbitA = pair.startA + spinDelta * orbitMix;
-      var orbitCx = panelCx + Math.cos(orbitA) * expandRad;
-      var orbitCy = panelCy + Math.sin(orbitA) * expandRad;
-      var cx = orbitCx + (pair.targetCx - orbitCx) * landBlend;
-      var cy = orbitCy + (pair.targetCy - orbitCy) * landBlend;
+      var delay = pair.gridDelay || 0;
+      var localSpan = Math.max(0.96 - delay, 0.42);
+      var localRaw = Math.min(Math.max((rawMove - delay) / localSpan, 0), 1);
+      if (localRaw <= 0) continue;
+      if (pair.startCx == null || pair.startCy == null) {
+        pair.startCx = procOffsetX + pair.gx * procStep + (waveVis.moveX || 0);
+        pair.startCy = procOffsetY + pair.gy * procStep + (waveVis.moveY || 0);
+        pair.prevCx = parseFloat(dot.getAttribute('data-process-prev-cx') || String(pair.startCx));
+        pair.prevCy = parseFloat(dot.getAttribute('data-process-prev-cy') || String(pair.startCy));
+      }
+      var gridP = localRaw;
+      var startCx = pair.startCx != null ? pair.startCx : parseFloat(dot.getAttribute('cx') || String(pair.targetCx));
+      var startCy = pair.startCy != null ? pair.startCy : parseFloat(dot.getAttribute('cy') || String(pair.targetCy));
+      var cx = startCx + (pair.targetCx - startCx) * gridP;
+      var cy = startCy + (pair.targetCy - startCy) * gridP;
+      if (localRaw < 0.30) {
+        var carryX = startCx - (pair.prevCx != null ? pair.prevCx : startCx);
+        var carryY = startCy - (pair.prevCy != null ? pair.prevCy : startCy);
+        var carryLen = Math.hypot(carryX, carryY);
+        if (carryLen > 0.001) {
+          var distToTarget = Math.hypot(pair.targetCx - startCx, pair.targetCy - startCy);
+          var carryT = localRaw / 0.30;
+          var carryShape = Math.sin(Math.PI * carryT) * Math.pow(1 - localRaw, 1.2);
+          var carryMag = Math.min(distToTarget * 0.08, 8);
+          cx += (carryX / carryLen) * carryMag * carryShape;
+          cy += (carryY / carryLen) * carryMag * carryShape;
+        }
+      }
 
       var waveR = waveVis.waveR;
-      var rVal = waveR + (pair.targetR - waveR) * scatterP;
-      var fill = processDotColor;
+      var visualP = localRaw > 0.54 ? _timematAiSmootherstep((localRaw - 0.54) / 0.46) : 0;
+      var rVal = waveR + (pair.targetR - waveR) * visualP;
+      var currentFill = _timematAiParseFill(dot.getAttribute('fill') || processDotColor, { r: 255, g: 117, b: 0, a: 1 });
+      var whitenP = localRaw > 0.84 ? _timematAiSmootherstep((localRaw - 0.84) / 0.16) : 0;
+      var fill = _timematAiLerpRgb(currentFill.r, currentFill.g, currentFill.b, 255, 255, 255, whitenP);
       var waveOp = waveVis.dotOpacity;
-      var op = waveOp + (1 - waveOp) * scatterP;
+      var op = waveOp + (1 - waveOp) * visualP;
 
       setDotAttr(dot, 'cx', cx.toFixed(2));
       setDotAttr(dot, 'cy', cy.toFixed(2));
@@ -1046,7 +1105,6 @@ function startDotTimeMatrixAiMotion(stage) {
     var scatterRunning = hasGridPairs && elapsed >= motion.scatterMoveStart;
 
     bgDots.forEach(function (dot) {
-        if (scatterRunning && gridScatterDots && gridScatterDots.has(dot)) return;
         var formState = dot.getAttribute('data-form-state');
         if (formState === 'travel' || formState === 'done' || formState === 'landed' || formState === 'scatter') return;
         if (dot.getAttribute('visibility') === 'hidden') return;
@@ -1059,6 +1117,10 @@ function startDotTimeMatrixAiMotion(stage) {
           var fadeDur = parseFloat(dot.getAttribute('data-fade-dur') || '260');
           var fadeP = Math.min(Math.max((elapsed - fadeStart) / fadeDur, 0), 1);
           if (fadeP <= 0) {
+            var fadeBaseCx = procOffsetX + gx * procStep;
+            var fadeBaseCy = procOffsetY + gy * procStep;
+            setDotAttr(dot, 'cx', (fadeBaseCx + (waveVis.moveX || 0)).toFixed(2));
+            setDotAttr(dot, 'cy', (fadeBaseCy + (waveVis.moveY || 0)).toFixed(2));
             setDotAttr(dot, 'r', String(waveVis.waveR));
             setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
             setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
@@ -1075,6 +1137,16 @@ function startDotTimeMatrixAiMotion(stage) {
           return;
         }
 
+        var baseCx = procOffsetX + gx * procStep;
+        var baseCy = procOffsetY + gy * procStep;
+        var processCx = baseCx + (waveVis.moveX || 0);
+        var processCy = baseCy + (waveVis.moveY || 0);
+        dot.setAttribute('data-process-prev-cx', dot.getAttribute('data-process-cx') || String(processCx));
+        dot.setAttribute('data-process-prev-cy', dot.getAttribute('data-process-cy') || String(processCy));
+        dot.setAttribute('data-process-cx', String(processCx));
+        dot.setAttribute('data-process-cy', String(processCy));
+        setDotAttr(dot, 'cx', processCx.toFixed(2));
+        setDotAttr(dot, 'cy', processCy.toFixed(2));
         setDotAttr(dot, 'r', String(waveVis.waveR));
         setDotAttr(dot, 'fill', waveVis.dotFill || _timematAiLerpRgb(255, 117, 0, 255, 255, 255, waveVis.dotWhiteBlend));
         setDotAttr(dot, 'fill-opacity', waveVis.dotOpacity.toFixed(3));
